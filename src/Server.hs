@@ -1,4 +1,6 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -29,13 +31,15 @@ import qualified Data.List as List
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
 import Data.Binary.Builder (Builder, fromByteString, singleton, putWord32be)
-import Data.ByteString.Lazy (fromStrict, toStrict)
+import Data.ByteString.Lazy (ByteString, fromStrict, toStrict)
 import Data.Binary.Get (getByteString, getInt8, getWord32be, pushChunk, runGet, runGetIncremental, Decoder(..))
 import qualified Data.ByteString.Char8 as ByteString
 import Data.ProtoLens.Encoding (encodeMessage, decodeMessage)
 import Data.ProtoLens.Message (Message)
-import Network.GRPC (RPC(..), Input, Output)
-import Network.HTTP.Types (status200, status404)
+import Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..), StreamingType(..))
+import GHC.TypeLits (Symbol)
+import Network.GRPC (RPC(..), path)
+import Network.HTTP.Types (ResponseHeaders, status200, status404)
 import Network.Wai (Application, Request, rawPathInfo, responseLBS, responseStream, requestBody, strictRequestBody)
 import Network.Wai.Handler.WarpTLS (runTLS)
 import Network.Wai.Handler.Warp (http2dataTrailers, defaultHTTP2Data, modifyHTTP2Data, HTTP2Data)
@@ -46,7 +50,7 @@ grpcApp service req rep = do
             ("content-type", "application/grpc")
           , ("trailer", "Grpc-Status")
           , ("trailer", "Grpc-Message")
-          ]
+          ] :: ResponseHeaders
     case lookupHandler (rawPathInfo req) service of
         Just (ServiceHandler (rpc, action)) ->
             rep $ responseStream status200 hdrs200 $ action req
@@ -59,21 +63,21 @@ type WaiHandler =
   -> IO ()
   -> IO ()
 
-data ServiceHandler = forall rpc. RPC rpc => ServiceHandler (rpc, WaiHandler)
+data ServiceHandler = forall s m . (Service s, HasMethod s m) => ServiceHandler (RPC s m, WaiHandler)
 
-type UnaryHandler rpc = Request -> Input rpc -> IO (Output rpc)
-type ServerStreamHandler rpc = Request -> Input rpc -> IO (IO (Maybe (Output rpc)))
-type ClientStreamHandler rpc = Request -> Either String (Input rpc) -> IO ()
+type UnaryHandler s m = Request -> MethodInput s m -> IO (MethodOutput s m)
+type ServerStreamHandler s m = Request -> MethodInput s m -> IO (IO (Maybe (MethodOutput s m)))
+type ClientStreamHandler s m = Request -> Either String (MethodInput s m) -> IO ()
 
-unary :: RPC rpc => rpc -> UnaryHandler rpc -> ServiceHandler
+unary :: (Service s, HasMethod s m) => RPC s m -> UnaryHandler s m -> ServiceHandler
 unary rpc handler =
     ServiceHandler (rpc, handleUnary rpc handler)
 
-serverStream :: RPC rpc => rpc -> ServerStreamHandler rpc -> ServiceHandler
+serverStream :: (Service s, HasMethod s m) => RPC s m -> ServerStreamHandler s m -> ServiceHandler
 serverStream rpc handler =
     ServiceHandler (rpc, handleServerStream rpc handler)
 
-clientStream :: RPC rpc => rpc -> ClientStreamHandler rpc -> ServiceHandler
+clientStream :: (Service s, HasMethod s m) => RPC s m -> ClientStreamHandler s m -> ServiceHandler
 clientStream rpc handler =
     ServiceHandler (rpc, handleClientStream rpc handler)
 
@@ -82,9 +86,9 @@ lookupHandler p plainHandlers =
     List.find (\(ServiceHandler (rpc, _)) -> path rpc == p) plainHandlers
 
 handleUnary ::
-     (RPC rpc)
-  => rpc
-  -> UnaryHandler rpc
+     (Service s, HasMethod s m)
+  => RPC s m
+  -> UnaryHandler s m
   -> WaiHandler
 handleUnary _ handler req write flush = do
         parsed <- decodePayload . toStrict <$> strictRequestBody req
@@ -99,9 +103,9 @@ handleUnary _ handler req write flush = do
             modifyHTTP2Data req (makeTrailers e)
 
 handleServerStream ::
-     (RPC rpc)
-  => rpc
-  -> ServerStreamHandler rpc
+     (Service s, HasMethod s m)
+  => RPC s m
+  -> ServerStreamHandler s m
   -> WaiHandler
 handleServerStream _ handler req write flush = do
         parsed <- decodePayload . toStrict <$> strictRequestBody req
@@ -122,9 +126,9 @@ handleServerStream _ handler req write flush = do
             modifyHTTP2Data req (makeTrailers e)
 
 handleClientStream ::
-     (RPC rpc)
-  => rpc
-  -> ClientStreamHandler rpc
+     (Service s, HasMethod s m)
+  => RPC s m
+  -> ClientStreamHandler s m
   -> WaiHandler
 handleClientStream _ handler req write flush = do
     let loop decoder = do

@@ -7,8 +7,9 @@ Also contains a demo sever using the awesome `grpcb.in` Proto.
 
 ## How to run the demo
 
-- First, clone and build (including generating code from protos) `http2-client-grpc-example` run in a project.
-- Point `/home/user/http2-client-grpc-example` to where you built `http2-client-grpc-example` in `stack.yaml`
+- First, clone and build (including generating code from protos) `http2-client-grpc` run in a project.
+- Follow instructions at `http2-client-grpc-exe` to install prerequisites
+- Run the `prepare.sh` script as well
 - Build a certificate
         ```shell
         openssl genrsa -out key.pem 2048

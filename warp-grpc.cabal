@@ -36,7 +36,6 @@ library
     , bytestring
     , http-types
     , http2-client-grpc
-    , http2-client-grpc-example
     , proto-lens
     , wai
     , warp
@@ -50,7 +49,7 @@ library
 executable warp-grpc-exe
   main-is: Main.hs
   hs-source-dirs:
-      app
+      app, gen
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
@@ -58,14 +57,16 @@ executable warp-grpc-exe
     , bytestring
     , http-types
     , http2-client-grpc
-    , http2-client-grpc-example
     , proto-lens
+    , proto-lens-protoc
     , wai
     , warp
     , warp-grpc
     , warp-tls
   other-modules:
       Paths_warp_grpc
+    , Proto.Protos.Grpcbin
+    , Proto.Protos.Grpcbin_Fields
   default-language: Haskell2010
 
 test-suite warp-grpc-test
@@ -80,7 +81,6 @@ test-suite warp-grpc-test
     , bytestring
     , http-types
     , http2-client-grpc
-    , http2-client-grpc-example
     , proto-lens
     , wai
     , warp
