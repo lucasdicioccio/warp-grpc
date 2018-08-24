@@ -23,6 +23,7 @@ dependencies:
 - base >= 4.7 && < 5
 - binary
 - bytestring
+- case-insensitive
 - http2-grpc-types
 - http-types
 - proto-lens

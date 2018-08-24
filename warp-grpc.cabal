@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: b1e47bfad20f2250765ea533d132b71655a6256aa88f3ece981b41f68cbed1b0
+-- hash: 82e6781f47635d1624d023009acc6d07ca8277564ef7e930b9e739b2790b2990
 
 name:           warp-grpc
 version:        0.1.0.0
@@ -33,6 +33,7 @@ library
       base >=4.7 && <5
     , binary
     , bytestring
+    , case-insensitive
     , http-types
     , http2-grpc-types
     , proto-lens
@@ -55,6 +56,7 @@ executable warp-grpc-exe
       base >=4.7 && <5
     , binary
     , bytestring
+    , case-insensitive
     , http-types
     , http2-grpc-types
     , proto-lens
@@ -78,6 +80,7 @@ test-suite warp-grpc-test
       base >=4.7 && <5
     , binary
     , bytestring
+    , case-insensitive
     , http-types
     , http2-grpc-types
     , proto-lens

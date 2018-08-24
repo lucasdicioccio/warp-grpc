@@ -27,6 +27,7 @@ module Network.GRPC.Server
 
 import Control.Exception (catch, throwIO)
 import qualified Data.List as List
+import qualified Data.CaseInsensitive as CI
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
 import Data.Binary.Builder (Builder, fromByteString, singleton, putWord32be)
@@ -36,7 +37,7 @@ import qualified Data.ByteString.Char8 as ByteString
 import Data.ProtoLens.Encoding (encodeMessage, decodeMessage)
 import Data.ProtoLens.Message (Message)
 import Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..))
-import Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path, trailerForStatusCode, GRPCStatusMessage)
+import Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path, trailerForStatusCode, GRPCStatusMessage, grpcContentTypeHV, grpcStatusH, grpcStatusHV, grpcMessageH, grpcMessageHV)
 import Network.HTTP.Types (status200, status404)
 import Network.Wai (Application, Request, rawPathInfo, responseLBS, responseStream, requestBody, strictRequestBody)
 import Network.Wai.Handler.WarpTLS (TLSSettings, runTLS)
@@ -45,9 +46,9 @@ import Network.Wai.Handler.Warp (Settings, http2dataTrailers, defaultHTTP2Data, 
 grpcApp :: [ServiceHandler] -> Application
 grpcApp service req rep = do
     let hdrs200 = [
-            ("content-type", "application/grpc")
-          , ("trailer", "Grpc-Status")
-          , ("trailer", "Grpc-Message")
+            ("content-type", grpcContentTypeHV)
+          , ("trailer", grpcStatusHV)
+          , ("trailer", grpcMessageHV)
           ]
     case lookupHandler (rawPathInfo req) service of
         Just handler ->
@@ -183,5 +184,5 @@ makeTrailers (GRPCStatus s msg) h2data =
     Just $! (fromMaybe defaultHTTP2Data h2data) { http2dataTrailers = trailers }
   where
     trailers = if ByteString.null msg then [status] else [status, message]
-    status = ("grpc-status", trailerForStatusCode s)
-    message = ("grpc-message", msg)
+    status = (CI.mk grpcStatusH, trailerForStatusCode s)
+    message = (CI.mk grpcMessageH, msg)
