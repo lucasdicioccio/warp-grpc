@@ -2,7 +2,7 @@
 {-# LANGUAGE DataKinds #-}
 module Main where
 
-import Server
+import Network.GRPC.Server
 
 import Control.Concurrent (threadDelay)
 import Data.ProtoLens.Message (def)

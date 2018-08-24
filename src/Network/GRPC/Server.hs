@@ -6,7 +6,7 @@
 -- TODO:
 -- * read timeout
 -- * proper primitives for streaming
-module Server
+module Network.GRPC.Server
     ( runGrpc
     , UnaryHandler
     , ServerStreamHandler
