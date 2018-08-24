@@ -23,13 +23,12 @@ dependencies:
 - base >= 4.7 && < 5
 - binary
 - bytestring
-- http2-client-grpc
+- http2-grpc-types
 - http-types
 - proto-lens
 - wai
 - warp
 - warp-tls
-- http2-client-grpc-example
 
 library:
   source-dirs: src
@@ -37,13 +36,20 @@ library:
 executables:
   warp-grpc-exe:
     main:                Main.hs
-    source-dirs:         app
+    other-modules:
+    - Proto.Protos.Grpcbin
+    - Proto.Protos.Grpcbin_Fields
+    source-dirs:
+    - app
+    - gen
     ghc-options:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
     dependencies:
     - warp-grpc
+    - proto-lens
+    - proto-lens-protoc
 
 tests:
   warp-grpc-test:

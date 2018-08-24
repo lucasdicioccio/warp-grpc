@@ -1,8 +1,8 @@
--- This file has been generated from package.yaml by hpack version 0.20.0.
+-- This file has been generated from package.yaml by hpack version 0.28.2.
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 8047833f0520f9d6d15f7a5d459fa49bd03ade10d58176f1030b4dca15a33b95
+-- hash: ef3d179fdc2899c12f86fefd78e3799f6182c7729c4bfad25363129bf9ac9f7b
 
 name:           warp-grpc
 version:        0.1.0.0
@@ -18,7 +18,6 @@ license:        BSD3
 license-file:   LICENSE
 build-type:     Simple
 cabal-version:  >= 1.10
-
 extra-source-files:
     ChangeLog.md
     README.md
@@ -35,8 +34,7 @@ library
     , binary
     , bytestring
     , http-types
-    , http2-client-grpc
-    , http2-client-grpc-example
+    , http2-grpc-types
     , proto-lens
     , wai
     , warp
@@ -51,21 +49,23 @@ executable warp-grpc-exe
   main-is: Main.hs
   hs-source-dirs:
       app
+      gen
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5
     , binary
     , bytestring
     , http-types
-    , http2-client-grpc
-    , http2-client-grpc-example
+    , http2-grpc-types
     , proto-lens
+    , proto-lens-protoc
     , wai
     , warp
     , warp-grpc
     , warp-tls
   other-modules:
-      Paths_warp_grpc
+      Proto.Protos.Grpcbin
+      Proto.Protos.Grpcbin_Fields
   default-language: Haskell2010
 
 test-suite warp-grpc-test
@@ -79,8 +79,7 @@ test-suite warp-grpc-test
     , binary
     , bytestring
     , http-types
-    , http2-client-grpc
-    , http2-client-grpc-example
+    , http2-grpc-types
     , proto-lens
     , wai
     , warp

@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -11,7 +12,7 @@ module Server
     , ServerStreamHandler
     , ClientStreamHandler
     -- * registration
-    , ServiceHandler
+    , ServiceHandler(..)
     , unary
     , serverStream
     , clientStream
@@ -24,7 +25,7 @@ module Server
     , grpcApp
     ) where
 
-import Control.Exception (Exception, catch, throwIO)
+import Control.Exception (catch, throwIO)
 import qualified Data.List as List
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
@@ -34,11 +35,12 @@ import Data.Binary.Get (getByteString, getInt8, getWord32be, pushChunk, runGet, 
 import qualified Data.ByteString.Char8 as ByteString
 import Data.ProtoLens.Encoding (encodeMessage, decodeMessage)
 import Data.ProtoLens.Message (Message)
-import Network.GRPC (RPC(..), Input, Output)
+import Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..))
+import Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path, trailerForStatusCode, GRPCStatusMessage)
 import Network.HTTP.Types (status200, status404)
 import Network.Wai (Application, Request, rawPathInfo, responseLBS, responseStream, requestBody, strictRequestBody)
-import Network.Wai.Handler.WarpTLS (runTLS)
-import Network.Wai.Handler.Warp (http2dataTrailers, defaultHTTP2Data, modifyHTTP2Data, HTTP2Data)
+import Network.Wai.Handler.WarpTLS (TLSSettings, runTLS)
+import Network.Wai.Handler.Warp (Settings, http2dataTrailers, defaultHTTP2Data, modifyHTTP2Data, HTTP2Data)
 
 grpcApp :: [ServiceHandler] -> Application
 grpcApp service req rep = do
@@ -48,8 +50,8 @@ grpcApp service req rep = do
           , ("trailer", "Grpc-Message")
           ]
     case lookupHandler (rawPathInfo req) service of
-        Just (ServiceHandler (rpc, action)) ->
-            rep $ responseStream status200 hdrs200 $ action req
+        Just handler ->
+            rep $ responseStream status200 hdrs200 $ handler req
         Nothing ->
             rep $ responseLBS status404 [] $ fromStrict ("not found: " <> rawPathInfo req)
 
@@ -59,32 +61,35 @@ type WaiHandler =
   -> IO ()
   -> IO ()
 
-data ServiceHandler = forall rpc. RPC rpc => ServiceHandler (rpc, WaiHandler)
+data ServiceHandler = ServiceHandler {
+    grpcHandlerPath :: ByteString.ByteString
+  , grpcWaiHandler  :: WaiHandler
+  }
 
-type UnaryHandler rpc = Request -> Input rpc -> IO (Output rpc)
-type ServerStreamHandler rpc = Request -> Input rpc -> IO (IO (Maybe (Output rpc)))
-type ClientStreamHandler rpc = Request -> Either String (Input rpc) -> IO ()
+type UnaryHandler s m = Request -> MethodInput s m -> IO (MethodOutput s m)
+type ServerStreamHandler s m = Request -> MethodInput s m -> IO (IO (Maybe (MethodOutput s m)))
+type ClientStreamHandler s m = Request -> Either String (MethodInput s m) -> IO ()
 
-unary :: RPC rpc => rpc -> UnaryHandler rpc -> ServiceHandler
+unary :: (Service s, HasMethod s m) => RPC s m -> UnaryHandler s m -> ServiceHandler
 unary rpc handler =
-    ServiceHandler (rpc, handleUnary rpc handler)
+    ServiceHandler (path rpc) (handleUnary rpc handler)
 
-serverStream :: RPC rpc => rpc -> ServerStreamHandler rpc -> ServiceHandler
+serverStream :: (Service s, HasMethod s m) => RPC s m -> ServerStreamHandler s m -> ServiceHandler
 serverStream rpc handler =
-    ServiceHandler (rpc, handleServerStream rpc handler)
+    ServiceHandler (path rpc) (handleServerStream rpc handler)
 
-clientStream :: RPC rpc => rpc -> ClientStreamHandler rpc -> ServiceHandler
+clientStream :: (Service s, HasMethod s m) => RPC s m -> ClientStreamHandler s m -> ServiceHandler
 clientStream rpc handler =
-    ServiceHandler (rpc, handleClientStream rpc handler)
+    ServiceHandler (path rpc) (handleClientStream rpc handler)
 
-lookupHandler :: ByteString.ByteString -> [ServiceHandler] -> Maybe ServiceHandler
-lookupHandler p plainHandlers =
-    List.find (\(ServiceHandler (rpc, _)) -> path rpc == p) plainHandlers
+lookupHandler :: ByteString.ByteString -> [ServiceHandler] -> Maybe WaiHandler
+lookupHandler p plainHandlers = grpcWaiHandler <$>
+    List.find (\(ServiceHandler rpcPath _) -> rpcPath == p) plainHandlers
 
 handleUnary ::
-     (RPC rpc)
-  => rpc
-  -> UnaryHandler rpc
+     (Service s, HasMethod s m)
+  => RPC s m
+  -> UnaryHandler s m
   -> WaiHandler
 handleUnary _ handler req write flush = do
         parsed <- decodePayload . toStrict <$> strictRequestBody req
@@ -99,9 +104,9 @@ handleUnary _ handler req write flush = do
             modifyHTTP2Data req (makeTrailers e)
 
 handleServerStream ::
-     (RPC rpc)
-  => rpc
-  -> ServerStreamHandler rpc
+     (Service s, HasMethod s m)
+  => RPC s m
+  -> ServerStreamHandler s m
   -> WaiHandler
 handleServerStream _ handler req write flush = do
         parsed <- decodePayload . toStrict <$> strictRequestBody req
@@ -122,11 +127,11 @@ handleServerStream _ handler req write flush = do
             modifyHTTP2Data req (makeTrailers e)
 
 handleClientStream ::
-     (RPC rpc)
-  => rpc
-  -> ClientStreamHandler rpc
+     (Service s, HasMethod s m)
+  => RPC s m
+  -> ClientStreamHandler s m
   -> WaiHandler
-handleClientStream _ handler req write flush = do
+handleClientStream _ handler req _ _ = do
     let loop decoder = do
             dat <- requestBody req
             handleAllChunks decoder dat loop
@@ -138,7 +143,7 @@ handleClientStream _ handler req write flush = do
            (Done unusedDat _ val) -> do
                handler req val
                handleAllChunks decodeResult unusedDat exitLoop
-           failure@(Fail _ _ err)   -> do
+           (Fail _ _ err)         -> do
                throwIO (GRPCStatus INTERNAL (ByteString.pack err))
            partial@(Partial _)    ->
                exitLoop partial
@@ -151,7 +156,7 @@ decodeResult = runGetIncremental $ do
 
 decodePayload :: Message a => ByteString.ByteString -> Either String a
 decodePayload bin
-  | ByteString.length bin < fromIntegral 5 =
+  | ByteString.length bin < fromIntegral (5::Int) =
         Left "not enough data for small in-data Proto header"
   | otherwise =
         runGet go (fromStrict bin)
@@ -165,69 +170,13 @@ decodePayload bin
         else 
             decodeMessage <$> getByteString (fromIntegral n)
 
--- https://grpc.io/grpc/core/impl_2codegen_2status_8h.html#a35ab2a68917eb836de84cb23253108eb
-data GRPCStatusCode =
-    OK
-  | CANCELLED
-  | UNKNOWN
-  | INVALID_ARGUMENT
-  | DEADLINE_EXCEEDED
-  | NOT_FOUND
-  | ALREADY_EXISTS
-  | PERMISSION_DENIED
-  | UNAUTHENTICATED
-  | RESOURCE_EXHAUSTED
-  | FAILED_PRECONDITION
-  | ABORTED
-  | OUT_OF_RANGE
-  | UNIMPLEMENTED
-  | INTERNAL
-  | UNAVAILABLE
-  | DATA_LOSS
-  deriving Show
 
-trailerForStatusCode :: GRPCStatusCode -> ByteString.ByteString
-trailerForStatusCode = \case
-    OK
-      -> "0"
-    CANCELLED
-      -> "1"
-    UNKNOWN
-      -> "2"
-    INVALID_ARGUMENT
-      -> "3"
-    DEADLINE_EXCEEDED
-      -> "4"
-    NOT_FOUND
-      -> "5"
-    ALREADY_EXISTS
-      -> "6"
-    PERMISSION_DENIED
-      -> "7"
-    UNAUTHENTICATED
-      -> "16"
-    RESOURCE_EXHAUSTED
-      -> "8"
-    FAILED_PRECONDITION
-      -> "9"
-    ABORTED
-      -> "10"
-    OUT_OF_RANGE
-      -> "11"
-    UNIMPLEMENTED
-      -> "12"
-    INTERNAL
-      -> "13"
-    UNAVAILABLE
-      -> "14"
-    DATA_LOSS
-      -> "15"
-
-type GRPCStatusMessage = ByteString.ByteString
-
-data GRPCStatus = GRPCStatus !GRPCStatusCode !GRPCStatusMessage
-  deriving Show
-instance Exception GRPCStatus
+runGrpc
+  :: TLSSettings
+  -> Settings
+  -> [ServiceHandler]
+  -> IO ()
+runGrpc tlsSettings settings handlers = runTLS tlsSettings settings (grpcApp handlers)
 
 makeTrailers :: GRPCStatus -> (Maybe HTTP2Data -> Maybe HTTP2Data)
 makeTrailers (GRPCStatus s msg) h2data =
@@ -236,5 +185,3 @@ makeTrailers (GRPCStatus s msg) h2data =
     trailers = if ByteString.null msg then [status] else [status, message]
     status = ("grpc-status", trailerForStatusCode s)
     message = ("grpc-message", msg)
-
-runGrpc tlsSettings settings handlers = runTLS tlsSettings settings (grpcApp handlers)
