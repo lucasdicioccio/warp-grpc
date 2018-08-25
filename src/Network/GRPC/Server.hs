@@ -101,11 +101,11 @@ handleUnary _ handler req write flush = do
                 bin <- encodeMessage <$> handler req msg
                 write $ singleton 0 <> putWord32be (fromIntegral $ ByteString.length bin) <> fromByteString bin
                 flush
-                modifyHTTP2Data req (makeTrailers (GRPCStatus OK ""))
+                modifyHTTP2Trailers req (GRPCStatus OK "")
         let handleParseFailure err = do
-                modifyHTTP2Data req (makeTrailers (GRPCStatus INTERNAL (ByteString.pack err)))
+                modifyHTTP2Trailers req (GRPCStatus INTERNAL (ByteString.pack err))
         (either handleParseFailure handleParseSuccess parsed) `catch` \e -> do
-            modifyHTTP2Data req (makeTrailers e)
+            modifyHTTP2Trailers req e
 
 handleServerStream ::
      (Service s, HasMethod s m)
@@ -123,12 +123,12 @@ handleServerStream _ handler req write flush = do
                             flush
                             go
                         Nothing -> do
-                            modifyHTTP2Data req (makeTrailers (GRPCStatus OK ""))
+                            modifyHTTP2Trailers req (GRPCStatus OK "")
                 go
         let handleParseFailure err = do
-                modifyHTTP2Data req (makeTrailers (GRPCStatus INTERNAL (ByteString.pack err)))
+                modifyHTTP2Trailers req (GRPCStatus INTERNAL (ByteString.pack err))
         (either handleParseFailure handleParseSuccess parsed) `catch` \e -> do
-            modifyHTTP2Data req (makeTrailers e)
+            modifyHTTP2Trailers req e
 
 handleClientStream ::
      (Service s, HasMethod s m)
@@ -139,7 +139,7 @@ handleClientStream ::
 handleClientStream rpc compression handler req _ _ = do
     handleRequestChunksLoop (decodeInput rpc compression) (handler req) loop nextChunk
       `catch` \e -> do
-          modifyHTTP2Data req (makeTrailers e)
+          modifyHTTP2Trailers req e
   where
     nextChunk = requestBody req
     loop chunk = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc compression) (handler req) loop nextChunk
@@ -195,6 +195,9 @@ runGrpc
   -> [ServiceHandler]
   -> IO ()
 runGrpc tlsSettings settings handlers = runTLS tlsSettings settings (grpcApp handlers)
+
+modifyHTTP2Trailers :: Request -> GRPCStatus -> IO ()
+modifyHTTP2Trailers req = modifyHTTP2Data req . makeTrailers
 
 makeTrailers :: GRPCStatus -> (Maybe HTTP2Data -> Maybe HTTP2Data)
 makeTrailers (GRPCStatus s msg) h2data =
