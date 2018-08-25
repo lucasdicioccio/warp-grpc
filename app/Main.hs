@@ -9,6 +9,7 @@ import Data.ProtoLens.Message (def)
 import Network.Wai.Handler.WarpTLS (defaultTlsSettings)
 import Network.Wai.Handler.Warp (defaultSettings)
 import Network.GRPC.HTTP2.Types (RPC(..))
+import Network.GRPC.HTTP2.Encoding (gzip)
 import Proto.Protos.Grpcbin (GRPCBin, EmptyMessage(..), IndexReply(..), IndexReply'Endpoint(..))
 
 main :: IO ()
@@ -21,7 +22,7 @@ handlers =
   , unary (RPC :: RPC GRPCBin "specificError") handleSpecificError
   , unary (RPC :: RPC GRPCBin "randomError") handleRandomError
   , serverStream (RPC :: RPC GRPCBin "dummyServerStream") handleDummyServerStream
-  , clientStream (RPC :: RPC GRPCBin "dummyClientStream") handleDummyClientStream
+  , clientStream (RPC :: RPC GRPCBin "dummyClientStream") gzip handleDummyClientStream
   ]
 
 handleIndex :: UnaryHandler GRPCBin "index"

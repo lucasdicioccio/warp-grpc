@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ExistentialQuantification #-}
 {-# LANGUAGE LambdaCase #-}
@@ -32,12 +33,14 @@ import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
 import Data.Binary.Builder (Builder, fromByteString, singleton, putWord32be)
 import Data.ByteString.Lazy (fromStrict, toStrict)
-import Data.Binary.Get (getByteString, getInt8, getWord32be, pushChunk, runGet, runGetIncremental, Decoder(..))
+import Data.Binary.Get (getByteString, getInt8, getWord32be, pushChunk, runGet, Decoder(..))
 import qualified Data.ByteString.Char8 as ByteString
+import Data.ByteString.Char8 (ByteString)
 import Data.ProtoLens.Encoding (encodeMessage, decodeMessage)
 import Data.ProtoLens.Message (Message)
 import Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..))
 import Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path, trailerForStatusCode, GRPCStatusMessage, grpcContentTypeHV, grpcStatusH, grpcStatusHV, grpcMessageH, grpcMessageHV)
+import Network.GRPC.HTTP2.Encoding (Compression, decodeInput)
 import Network.HTTP.Types (status200, status404)
 import Network.Wai (Application, Request, rawPathInfo, responseLBS, responseStream, requestBody, strictRequestBody)
 import Network.Wai.Handler.WarpTLS (TLSSettings, runTLS)
@@ -63,7 +66,7 @@ type WaiHandler =
   -> IO ()
 
 data ServiceHandler = ServiceHandler {
-    grpcHandlerPath :: ByteString.ByteString
+    grpcHandlerPath :: ByteString
   , grpcWaiHandler  :: WaiHandler
   }
 
@@ -79,11 +82,11 @@ serverStream :: (Service s, HasMethod s m) => RPC s m -> ServerStreamHandler s m
 serverStream rpc handler =
     ServiceHandler (path rpc) (handleServerStream rpc handler)
 
-clientStream :: (Service s, HasMethod s m) => RPC s m -> ClientStreamHandler s m -> ServiceHandler
-clientStream rpc handler =
-    ServiceHandler (path rpc) (handleClientStream rpc handler)
+clientStream :: (Service s, HasMethod s m) => RPC s m -> Compression -> ClientStreamHandler s m -> ServiceHandler
+clientStream rpc compression handler =
+    ServiceHandler (path rpc) (handleClientStream rpc compression handler)
 
-lookupHandler :: ByteString.ByteString -> [ServiceHandler] -> Maybe WaiHandler
+lookupHandler :: ByteString -> [ServiceHandler] -> Maybe WaiHandler
 lookupHandler p plainHandlers = grpcWaiHandler <$>
     List.find (\(ServiceHandler rpcPath _) -> rpcPath == p) plainHandlers
 
@@ -130,32 +133,44 @@ handleServerStream _ handler req write flush = do
 handleClientStream ::
      (Service s, HasMethod s m)
   => RPC s m
+  -> Compression
   -> ClientStreamHandler s m
   -> WaiHandler
-handleClientStream _ handler req _ _ = do
-    let loop decoder = do
-            dat <- requestBody req
-            handleAllChunks decoder dat loop
-    loop decodeResult `catch` \e -> do
-        modifyHTTP2Data req (makeTrailers e)
+handleClientStream rpc compression handler req _ _ = do
+    handleRequestChunksLoop (decodeInput rpc compression) (handler req) loop nextChunk
+      `catch` \e -> do
+          modifyHTTP2Data req (makeTrailers e)
   where
-    handleAllChunks decoder dat exitLoop =
-       case pushChunk decoder dat of
-           (Done unusedDat _ val) -> do
-               handler req val
-               handleAllChunks decodeResult unusedDat exitLoop
-           (Fail _ _ err)         -> do
-               throwIO (GRPCStatus INTERNAL (ByteString.pack err))
-           partial@(Partial _)    ->
-               exitLoop partial
+    nextChunk = requestBody req
+    loop chunk = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc compression) (handler req) loop nextChunk
 
-decodeResult :: Message a => Decoder (Either String a)
-decodeResult = runGetIncremental $ do
-    0 <- getInt8      -- 1byte
-    n <- getWord32be  -- 4bytes
-    decodeMessage <$> getByteString (fromIntegral n)
+handleRequestChunksLoop
+  :: (Message a)
+  => Decoder (Either String a)
+  -- ^ Message decoder.
+  -> (Either String a -> IO ())
+  -- ^ Handler for a single message.
+  -> (ByteString -> IO ())
+  -- ^ Continue action when there are leftover data.
+  -> IO ByteString
+  -- ^ Action to retrieve the next chunk.
+  -> IO ()
+handleRequestChunksLoop decoder handler continue nextChunk =
+    nextChunk >>= \chunk -> do
+        case pushChunk decoder chunk of
+            (Done unusedDat _ val) -> do
+                handler val
+                continue unusedDat
+            (Fail _ _ err)         ->
+                throwIO (GRPCStatus INTERNAL (ByteString.pack err))
+            partial@(Partial _)    ->
+                if ByteString.null chunk
+                then
+                    throwIO (GRPCStatus INTERNAL "early end of request body")
+                else
+                    handleRequestChunksLoop partial handler continue nextChunk
 
-decodePayload :: Message a => ByteString.ByteString -> Either String a
+decodePayload :: Message a => ByteString -> Either String a
 decodePayload bin
   | ByteString.length bin < fromIntegral (5::Int) =
         Left "not enough data for small in-data Proto header"
