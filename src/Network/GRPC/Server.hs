@@ -72,7 +72,7 @@ data ServiceHandler = ServiceHandler {
 
 type UnaryHandler s m = Request -> MethodInput s m -> IO (MethodOutput s m)
 type ServerStreamHandler s m = Request -> MethodInput s m -> IO (IO (Maybe (MethodOutput s m)))
-type ClientStreamHandler s m = Request -> Either String (MethodInput s m) -> IO ()
+type ClientStreamHandler s m = Request -> MethodInput s m -> IO ()
 
 unary :: (Service s, HasMethod s m) => RPC s m -> UnaryHandler s m -> ServiceHandler
 unary rpc handler =
@@ -148,7 +148,7 @@ handleRequestChunksLoop
   :: (Message a)
   => Decoder (Either String a)
   -- ^ Message decoder.
-  -> (Either String a -> IO ())
+  -> (a -> IO ())
   -- ^ Handler for a single message.
   -> (ByteString -> IO ())
   -- ^ Continue action when there are leftover data.
@@ -158,9 +158,11 @@ handleRequestChunksLoop
 handleRequestChunksLoop decoder handler continue nextChunk =
     nextChunk >>= \chunk -> do
         case pushChunk decoder chunk of
-            (Done unusedDat _ val) -> do
+            (Done unusedDat _ (Right val)) -> do
                 handler val
                 continue unusedDat
+            (Done _ _ (Left err)) -> do
+                throwIO (GRPCStatus INTERNAL (ByteString.pack err))
             (Fail _ _ err)         ->
                 throwIO (GRPCStatus INTERNAL (ByteString.pack err))
             partial@(Partial _)    ->
