@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 696bf135a42ae2f027c29581cb65cdba8714549eddd071831bad23d0702c85e5
+-- hash: 126ac842b2a4bdfbbdce213bb5aedd29e1b8e447110710d0e1234ec3ea4c7fbe
 
 name:           warp-grpc
 version:        0.1.0.0
@@ -42,6 +42,7 @@ library
     , warp-tls
   exposed-modules:
       Network.GRPC.Server
+      Network.GRPC.Server.Handlers
       Network.GRPC.Server.Helpers
       Network.GRPC.Server.Wai
   other-modules:
