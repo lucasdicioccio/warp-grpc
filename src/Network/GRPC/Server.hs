@@ -31,16 +31,15 @@ import qualified Data.List as List
 import qualified Data.CaseInsensitive as CI
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
-import Data.Binary.Builder (Builder, fromByteString, singleton, putWord32be)
+import Data.Binary.Builder (Builder) 
 import Data.ByteString.Lazy (fromStrict)
 import Data.Binary.Get (pushChunk, Decoder(..))
 import qualified Data.ByteString.Char8 as ByteString
 import Data.ByteString.Char8 (ByteString)
-import Data.ProtoLens.Encoding (encodeMessage)
 import Data.ProtoLens.Message (Message)
 import Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..))
 import Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path, trailerForStatusCode, GRPCStatusMessage, grpcContentTypeHV, grpcStatusH, grpcStatusHV, grpcMessageH, grpcMessageHV)
-import Network.GRPC.HTTP2.Encoding (Compression, decodeInput)
+import Network.GRPC.HTTP2.Encoding (Compression, decodeInput, encodeOutput)
 import Network.HTTP.Types (status200, status404)
 import Network.Wai (Application, Request, rawPathInfo, responseLBS, responseStream, requestBody)
 import Network.Wai.Handler.WarpTLS (TLSSettings, runTLS)
@@ -101,13 +100,10 @@ handleUnary rpc compression handler req write flush = do
     handleRequestChunksLoop (decodeInput rpc compression) (\i -> handler req i >>= reply) errorOnLeftOver nextChunk
       `catch` \e -> do
           modifyHTTP2Trailers req e
-
   where
     nextChunk = requestBody req
     reply msg = do
-        let bin = encodeMessage msg
-        write $ singleton 0 <> putWord32be (fromIntegral $ ByteString.length bin) <> fromByteString bin
-        flush
+        write (encodeOutput rpc compression msg) >> flush
         modifyHTTP2Trailers req (GRPCStatus OK "")
 
 handleServerStream ::
@@ -123,10 +119,8 @@ handleServerStream rpc compression handler req write flush = do
     nextChunk = requestBody req
     replyN getMsg = do
         let go = getMsg >>= \case
-                Just dat -> do
-                    let bin = encodeMessage dat
-                    write $ singleton 0 <> putWord32be (fromIntegral $ ByteString.length bin) <> fromByteString bin
-                    flush
+                Just msg -> do
+                    write (encodeOutput rpc compression msg) >> flush
                     go
                 Nothing -> do
                     modifyHTTP2Trailers req (GRPCStatus OK "")
