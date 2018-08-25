@@ -3,7 +3,6 @@
 module Network.GRPC.Server.Handlers where
 
 import           Control.Exception (catch, throwIO)
-import           Control.Monad (when)
 import           Data.Binary.Get (pushChunk, Decoder(..))
 import qualified Data.ByteString.Char8 as ByteString
 import           Data.ByteString.Char8 (ByteString)
@@ -63,7 +62,6 @@ handleUnary ::
   -> UnaryHandler s m
   -> WaiHandler
 handleUnary rpc compression handler req write flush = do
-    let errorOnLeftOver rest = throwIO $ GRPCStatus INTERNAL ("left-overs: " <> rest)
     handleRequestChunksLoop (decodeInput rpc compression) (\i -> handler req i >>= reply) errorOnLeftOver nextChunk
       `catch` \e -> do
           modifyGRPCStatus req e
@@ -81,7 +79,6 @@ handleServerStream ::
   -> ServerStreamHandler s m
   -> WaiHandler
 handleServerStream rpc compression handler req write flush = do
-    let errorOnLeftOver rest = throwIO $ GRPCStatus INTERNAL ("left-overs: " <> rest)
     handleRequestChunksLoop (decodeInput rpc compression) (\i -> handler req i >>= replyN) errorOnLeftOver nextChunk
   where
     nextChunk = requestBody req
@@ -127,7 +124,7 @@ handleRequestChunksLoop decoder handler continue nextChunk =
         case pushChunk decoder chunk of
             (Done unusedDat _ (Right val)) -> do
                 handler val
-                when (not . ByteString.null $ unusedDat) $ continue unusedDat
+                continue unusedDat
             (Done _ _ (Left err)) -> do
                 throwIO (GRPCStatus INTERNAL (ByteString.pack $ "done-error: " ++ err))
             (Fail _ _ err)         ->
@@ -138,3 +135,9 @@ handleRequestChunksLoop decoder handler continue nextChunk =
                     throwIO (GRPCStatus INTERNAL "early end of request body")
                 else
                     handleRequestChunksLoop partial handler continue nextChunk
+
+-- | Helper to error on left overs.
+errorOnLeftOver :: ByteString -> IO ()
+errorOnLeftOver rest
+  | ByteString.null rest = pure ()
+  | otherwise            = throwIO $ GRPCStatus INTERNAL ("left-overs: " <> rest)
