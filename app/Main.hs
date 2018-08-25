@@ -17,10 +17,10 @@ main = runGrpc defaultTlsSettings defaultSettings handlers
 
 handlers :: [ServiceHandler]
 handlers =
-  [ unary (RPC :: RPC GRPCBin "empty") handleEmpty
-  , unary (RPC :: RPC GRPCBin "index") handleIndex
-  , unary (RPC :: RPC GRPCBin "specificError") handleSpecificError
-  , unary (RPC :: RPC GRPCBin "randomError") handleRandomError
+  [ unary (RPC :: RPC GRPCBin "empty") gzip handleEmpty
+  , unary (RPC :: RPC GRPCBin "index") gzip handleIndex
+  , unary (RPC :: RPC GRPCBin "specificError") gzip handleSpecificError
+  , unary (RPC :: RPC GRPCBin "randomError") gzip handleRandomError
   , serverStream (RPC :: RPC GRPCBin "dummyServerStream") handleDummyServerStream
   , clientStream (RPC :: RPC GRPCBin "dummyClientStream") gzip handleDummyClientStream
   ]

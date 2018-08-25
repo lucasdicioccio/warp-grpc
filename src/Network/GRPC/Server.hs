@@ -74,9 +74,9 @@ type UnaryHandler s m = Request -> MethodInput s m -> IO (MethodOutput s m)
 type ServerStreamHandler s m = Request -> MethodInput s m -> IO (IO (Maybe (MethodOutput s m)))
 type ClientStreamHandler s m = Request -> MethodInput s m -> IO ()
 
-unary :: (Service s, HasMethod s m) => RPC s m -> UnaryHandler s m -> ServiceHandler
-unary rpc handler =
-    ServiceHandler (path rpc) (handleUnary rpc handler)
+unary :: (Service s, HasMethod s m) => RPC s m -> Compression -> UnaryHandler s m -> ServiceHandler
+unary rpc compression handler =
+    ServiceHandler (path rpc) (handleUnary rpc compression handler)
 
 serverStream :: (Service s, HasMethod s m) => RPC s m -> ServerStreamHandler s m -> ServiceHandler
 serverStream rpc handler =
@@ -93,19 +93,22 @@ lookupHandler p plainHandlers = grpcWaiHandler <$>
 handleUnary ::
      (Service s, HasMethod s m)
   => RPC s m
+  -> Compression
   -> UnaryHandler s m
   -> WaiHandler
-handleUnary _ handler req write flush = do
-        parsed <- decodePayload . toStrict <$> strictRequestBody req
-        let handleParseSuccess msg = do
-                bin <- encodeMessage <$> handler req msg
-                write $ singleton 0 <> putWord32be (fromIntegral $ ByteString.length bin) <> fromByteString bin
-                flush
-                modifyHTTP2Trailers req (GRPCStatus OK "")
-        let handleParseFailure err = do
-                modifyHTTP2Trailers req (GRPCStatus INTERNAL (ByteString.pack err))
-        (either handleParseFailure handleParseSuccess parsed) `catch` \e -> do
-            modifyHTTP2Trailers req e
+handleUnary rpc compression handler req write flush = do
+    let errorOnLeftOver = undefined
+    handleRequestChunksLoop (decodeInput rpc compression) (\i -> handler req i >>= reply) errorOnLeftOver nextChunk
+      `catch` \e -> do
+          modifyHTTP2Trailers req e
+
+  where
+    nextChunk = requestBody req
+    reply msg = do
+        let bin = encodeMessage msg
+        write $ singleton 0 <> putWord32be (fromIntegral $ ByteString.length bin) <> fromByteString bin
+        flush
+        modifyHTTP2Trailers req (GRPCStatus OK "")
 
 handleServerStream ::
      (Service s, HasMethod s m)
@@ -155,6 +158,7 @@ handleRequestChunksLoop
   -> IO ByteString
   -- ^ Action to retrieve the next chunk.
   -> IO ()
+{-# INLINEABLE handleRequestChunksLoop #-}
 handleRequestChunksLoop decoder handler continue nextChunk =
     nextChunk >>= \chunk -> do
         case pushChunk decoder chunk of
