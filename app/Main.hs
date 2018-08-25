@@ -27,31 +27,31 @@ handlers =
 
 handleIndex :: UnaryHandler GRPCBin "index"
 handleIndex _ input = do
-    print input
+    print ("index"::[Char], input)
     return $ IndexReply "desc" [IndexReply'Endpoint "/path1" "ill-supported" def] def
 
 handleEmpty :: UnaryHandler GRPCBin "empty"
 handleEmpty _ input = do
-    print input
+    print ("empty"::[Char], input)
     return $ EmptyMessage def
 
 handleSpecificError :: UnaryHandler GRPCBin "specificError"
 handleSpecificError _ input = do
-    print input
+    print ("specificError"::[Char], input)
     _ <- throwIO $ GRPCStatus INTERNAL "noo"
     return $ EmptyMessage def
 
 handleRandomError :: UnaryHandler GRPCBin "randomError"
 handleRandomError _ input = do
-    print input
+    print ("randomError"::[Char], input)
     return $ EmptyMessage def
 
 handleDummyServerStream :: ServerStreamHandler GRPCBin "dummyServerStream"
 handleDummyServerStream _ input = do
-    print input
+    print ("sstream"::[Char], input)
     return $ (threadDelay 1000000 >> return (Just input))
 
 handleDummyClientStream :: ClientStreamHandler GRPCBin "dummyClientStream"
 handleDummyClientStream _ input = do
-    print input
+    print ("cstream"::[Char], input)
     return $ def
