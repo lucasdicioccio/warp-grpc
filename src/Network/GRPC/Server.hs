@@ -32,17 +32,17 @@ import qualified Data.CaseInsensitive as CI
 import Data.Maybe (fromMaybe)
 import Data.Monoid ((<>))
 import Data.Binary.Builder (Builder, fromByteString, singleton, putWord32be)
-import Data.ByteString.Lazy (fromStrict, toStrict)
-import Data.Binary.Get (getByteString, getInt8, getWord32be, pushChunk, runGet, Decoder(..))
+import Data.ByteString.Lazy (fromStrict)
+import Data.Binary.Get (pushChunk, Decoder(..))
 import qualified Data.ByteString.Char8 as ByteString
 import Data.ByteString.Char8 (ByteString)
-import Data.ProtoLens.Encoding (encodeMessage, decodeMessage)
+import Data.ProtoLens.Encoding (encodeMessage)
 import Data.ProtoLens.Message (Message)
 import Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..))
 import Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path, trailerForStatusCode, GRPCStatusMessage, grpcContentTypeHV, grpcStatusH, grpcStatusHV, grpcMessageH, grpcMessageHV)
 import Network.GRPC.HTTP2.Encoding (Compression, decodeInput)
 import Network.HTTP.Types (status200, status404)
-import Network.Wai (Application, Request, rawPathInfo, responseLBS, responseStream, requestBody, strictRequestBody)
+import Network.Wai (Application, Request, rawPathInfo, responseLBS, responseStream, requestBody)
 import Network.Wai.Handler.WarpTLS (TLSSettings, runTLS)
 import Network.Wai.Handler.Warp (Settings, http2dataTrailers, defaultHTTP2Data, modifyHTTP2Data, HTTP2Data)
 
@@ -78,9 +78,9 @@ unary :: (Service s, HasMethod s m) => RPC s m -> Compression -> UnaryHandler s 
 unary rpc compression handler =
     ServiceHandler (path rpc) (handleUnary rpc compression handler)
 
-serverStream :: (Service s, HasMethod s m) => RPC s m -> ServerStreamHandler s m -> ServiceHandler
-serverStream rpc handler =
-    ServiceHandler (path rpc) (handleServerStream rpc handler)
+serverStream :: (Service s, HasMethod s m) => RPC s m -> Compression -> ServerStreamHandler s m -> ServiceHandler
+serverStream rpc compression handler =
+    ServiceHandler (path rpc) (handleServerStream rpc compression handler)
 
 clientStream :: (Service s, HasMethod s m) => RPC s m -> Compression -> ClientStreamHandler s m -> ServiceHandler
 clientStream rpc compression handler =
@@ -113,25 +113,24 @@ handleUnary rpc compression handler req write flush = do
 handleServerStream ::
      (Service s, HasMethod s m)
   => RPC s m
+  -> Compression
   -> ServerStreamHandler s m
   -> WaiHandler
-handleServerStream _ handler req write flush = do
-        parsed <- decodePayload . toStrict <$> strictRequestBody req
-        let handleParseSuccess msg = do
-                getMsg <- handler req msg
-                let go = getMsg >>= \case
-                        Just dat -> do
-                            let bin = encodeMessage dat
-                            write $ singleton 0 <> putWord32be (fromIntegral $ ByteString.length bin) <> fromByteString bin
-                            flush
-                            go
-                        Nothing -> do
-                            modifyHTTP2Trailers req (GRPCStatus OK "")
-                go
-        let handleParseFailure err = do
-                modifyHTTP2Trailers req (GRPCStatus INTERNAL (ByteString.pack err))
-        (either handleParseFailure handleParseSuccess parsed) `catch` \e -> do
-            modifyHTTP2Trailers req e
+handleServerStream rpc compression handler req write flush = do
+    let errorOnLeftOver = undefined
+    handleRequestChunksLoop (decodeInput rpc compression) (\i -> handler req i >>= replyN) errorOnLeftOver nextChunk
+  where
+    nextChunk = requestBody req
+    replyN getMsg = do
+        let go = getMsg >>= \case
+                Just dat -> do
+                    let bin = encodeMessage dat
+                    write $ singleton 0 <> putWord32be (fromIntegral $ ByteString.length bin) <> fromByteString bin
+                    flush
+                    go
+                Nothing -> do
+                    modifyHTTP2Trailers req (GRPCStatus OK "")
+        go
 
 handleClientStream ::
      (Service s, HasMethod s m)
@@ -175,23 +174,6 @@ handleRequestChunksLoop decoder handler continue nextChunk =
                     throwIO (GRPCStatus INTERNAL "early end of request body")
                 else
                     handleRequestChunksLoop partial handler continue nextChunk
-
-decodePayload :: Message a => ByteString -> Either String a
-decodePayload bin
-  | ByteString.length bin < fromIntegral (5::Int) =
-        Left "not enough data for small in-data Proto header"
-  | otherwise =
-        runGet go (fromStrict bin)
-  where
-    go = do
-        0 <- getInt8      -- 1byte
-        n <- getWord32be  -- 4bytes
-        if ByteString.length bin < fromIntegral (5 + n)
-        then
-            return $ Left "not enough data for decoding"
-        else 
-            decodeMessage <$> getByteString (fromIntegral n)
-
 
 runGrpc
   :: TLSSettings

@@ -21,7 +21,7 @@ handlers =
   , unary (RPC :: RPC GRPCBin "index") gzip handleIndex
   , unary (RPC :: RPC GRPCBin "specificError") gzip handleSpecificError
   , unary (RPC :: RPC GRPCBin "randomError") gzip handleRandomError
-  , serverStream (RPC :: RPC GRPCBin "dummyServerStream") handleDummyServerStream
+  , serverStream (RPC :: RPC GRPCBin "dummyServerStream") gzip handleDummyServerStream
   , clientStream (RPC :: RPC GRPCBin "dummyClientStream") gzip handleDummyClientStream
   ]
 
