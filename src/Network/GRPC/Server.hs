@@ -13,7 +13,7 @@ module Network.GRPC.Server
     , ServerStreamHandler
     , ClientStreamHandler
     -- * registration
-    , ServiceHandler(..)
+    , ServiceHandler
     , unary
     , serverStream
     , clientStream
@@ -22,80 +22,25 @@ module Network.GRPC.Server
     , throwIO
     , GRPCStatusMessage
     , GRPCStatusCode (..)
-    -- * low-level
+    -- * to work directly with WAI
     , grpcApp
     , grpcService
     ) where
 
 import Control.Exception (catch, throwIO)
-import qualified Data.List as List
-import Data.Monoid ((<>))
-import Data.Binary.Builder (Builder) 
-import Data.ByteString.Lazy (fromStrict)
 import Data.Binary.Get (pushChunk, Decoder(..))
 import qualified Data.ByteString.Char8 as ByteString
 import Data.ByteString.Char8 (ByteString)
 import Data.ProtoLens.Message (Message)
 import Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..))
-import Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path, GRPCStatusMessage, grpcContentTypeHV, grpcStatusHV, grpcMessageHV)
+import Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path, GRPCStatusMessage)
 import Network.GRPC.HTTP2.Encoding (Compression, decodeInput, encodeOutput)
-import Network.HTTP.Types (status200, status404)
-import Network.Wai (Application, Request, rawPathInfo, responseLBS, responseStream, requestBody)
+import Network.Wai (Request, requestBody)
 import Network.Wai.Handler.WarpTLS (TLSSettings, runTLS)
 import Network.Wai.Handler.Warp (Settings)
 
 import Network.GRPC.Server.Helpers (modifyGRPCStatus)
-
--- | A Wai Handler for a request.
-type WaiHandler =
-     Request
-  -- ^ Request object.
-  -> (Builder -> IO ())
-  -- ^ Write a data chunk in the reply.
-  -> IO ()
-  -- ^ Flush the output.
-  -> IO ()
-
--- | Untyped gRPC Service handler.
-data ServiceHandler = ServiceHandler {
-    grpcHandlerPath :: ByteString
-  -- ^ Path to the Service to be handled.
-  , grpcWaiHandler  :: WaiHandler
-  -- ^ Actual request handler.
-  }
-
--- | Build a WAI 'Application' from a list of ServiceHandler.
---
--- Currently, gRPC calls are lookuped up by traversing the list of ServiceHandler.
--- This lookup may be inefficient for large amount of servics.
-grpcApp :: [ServiceHandler] -> Application
-grpcApp services =
-    grpcService services err404app
-  where
-    err404app :: Application
-    err404app req rep =
-        rep $ responseLBS status404 [] $ fromStrict ("not found: " <> rawPathInfo req)
-
--- | Build a WAI 'Middleware' from a list of ServiceHandler.
---
--- Currently, gRPC calls are lookuped up by traversing the list of ServiceHandler.
--- This lookup may be inefficient for large amount of services.
-grpcService :: [ServiceHandler] -> (Application -> Application)
-grpcService services app = \req rep -> do
-    case lookupHandler (rawPathInfo req) services of
-        Just handler ->
-            rep $ responseStream status200 hdrs200 $ handler req
-        Nothing ->
-            app req rep
-  where
-    hdrs200 = [
-        ("content-type", grpcContentTypeHV)
-      , ("trailer", grpcStatusHV)
-      , ("trailer", grpcMessageHV)
-      ]
-    lookupHandler :: ByteString -> [ServiceHandler] -> Maybe WaiHandler
-    lookupHandler p plainHandlers = grpcWaiHandler <$>
-        List.find (\(ServiceHandler rpcPath _) -> rpcPath == p) plainHandlers
+import Network.GRPC.Server.Wai (WaiHandler, ServiceHandler(..), grpcApp, grpcService)
 
 
 -- | Helper to constructs and serve a gRPC over HTTP2 application.
