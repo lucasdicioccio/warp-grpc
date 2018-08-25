@@ -2,7 +2,7 @@
 --
 -- see: https://github.com/sol/hpack
 --
--- hash: 82e6781f47635d1624d023009acc6d07ca8277564ef7e930b9e739b2790b2990
+-- hash: 5223f4852e6cded7cea23cd2697b2b40cceb7338ad336ace75ba5c709d92932a
 
 name:           warp-grpc
 version:        0.1.0.0
@@ -42,6 +42,7 @@ library
     , warp-tls
   exposed-modules:
       Network.GRPC.Server
+      Network.GRPC.Server.Helpers
   other-modules:
       Paths_warp_grpc
   default-language: Haskell2010
