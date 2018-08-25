@@ -122,17 +122,17 @@ handleRequestChunksLoop
 handleRequestChunksLoop decoder handler continue nextChunk =
     case decoder of
         (Done unusedDat _ (Right val)) -> do
-            handler val
+            handler val -- consider adding the unusedDat bit in the handler because we may want to throw on errors rather than risk having an effect when in fact the data input is in error
             continue unusedDat
         (Done _ _ (Left err)) -> do
-            throwIO (GRPCStatus INTERNAL (ByteString.pack $ "done-error: " ++ err))
+            throwIO (GRPCStatus INVALID_ARGUMENT (ByteString.pack $ "done-error: " ++ err))
         (Fail _ _ err)         ->
-            throwIO (GRPCStatus INTERNAL (ByteString.pack $ "fail-error: " ++ err))
+            throwIO (GRPCStatus INVALID_ARGUMENT (ByteString.pack $ "fail-error: " ++ err))
         partial@(Partial _)    -> do
             chunk <- nextChunk
             if ByteString.null chunk
             then
-                throwIO (GRPCStatus INTERNAL "early end of request body")
+                throwIO (GRPCStatus INVALID_ARGUMENT "early end of request body")
             else
                 handleRequestChunksLoop (pushChunk partial chunk) handler continue nextChunk
 
@@ -140,4 +140,4 @@ handleRequestChunksLoop decoder handler continue nextChunk =
 errorOnLeftOver :: ByteString -> IO ()
 errorOnLeftOver rest
   | ByteString.null rest = pure ()
-  | otherwise            = throwIO $ GRPCStatus INTERNAL ("left-overs: " <> rest)
+  | otherwise            = throwIO $ GRPCStatus INVALID_ARGUMENT ("left-overs: " <> rest)
