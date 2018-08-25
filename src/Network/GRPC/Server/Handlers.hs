@@ -2,18 +2,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Network.GRPC.Server.Handlers where
 
-import           Control.Exception (catch, throwIO)
 import           Data.Binary.Get (pushChunk, Decoder(..))
 import qualified Data.ByteString.Char8 as ByteString
 import           Data.ByteString.Char8 (ByteString)
+import           Data.ByteString.Lazy (toStrict)
 import           Data.ProtoLens.Message (Message)
 import           Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..))
 import           Network.GRPC.HTTP2.Encoding (Compression, decodeInput, encodeOutput)
 import           Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path)
-import           Network.Wai (Request, requestBody)
+import           Network.Wai (Request, requestBody, strictRequestBody)
 
-import Network.GRPC.Server.Helpers (modifyGRPCStatus)
-import Network.GRPC.Server.Wai (WaiHandler, ServiceHandler(..))
+import Network.GRPC.Server.Wai (WaiHandler, ServiceHandler(..), closeEarly)
 
 -- | Handy type to refer to Handler for 'unary' RPCs handler.
 type UnaryHandler s m = Request -> MethodInput s m -> IO (MethodOutput s m)
@@ -22,7 +21,7 @@ type UnaryHandler s m = Request -> MethodInput s m -> IO (MethodOutput s m)
 type ServerStreamHandler s m = Request -> MethodInput s m -> IO (IO (Maybe (MethodOutput s m)))
 
 -- | Handy type for 'client-streaming' RPCs.
-type ClientStreamHandler s m = Request -> MethodInput s m -> IO ()
+type ClientStreamHandler s m = Request -> Maybe (MethodInput s m) -> IO ()
 
 -- | Construct a handler for handling a unary RPC.
 unary
@@ -62,14 +61,12 @@ handleUnary ::
   -> UnaryHandler s m
   -> WaiHandler
 handleUnary rpc compression handler req write flush = do
-    handleRequestChunksLoop (decodeInput rpc compression) (\i -> handler req i >>= reply) errorOnLeftOver nextChunk
-      `catch` \e -> do
-          modifyGRPCStatus req e
+    handleRequestChunksLoop (decodeInput rpc compression) handleMsg handleEof nextChunk
   where
-    nextChunk = requestBody req
-    reply msg = do
-        write (encodeOutput rpc compression msg) >> flush
-        modifyGRPCStatus req (GRPCStatus OK "")
+    nextChunk = toStrict <$> strictRequestBody req
+    handleMsg = errorOnLeftOver (\i -> handler req i >>= reply)
+    handleEof = closeEarly (GRPCStatus INVALID_ARGUMENT "early end of request body")
+    reply msg = write (encodeOutput rpc compression msg) >> flush
 
 -- | Handle Server-Streaming RPCs.
 handleServerStream ::
@@ -79,16 +76,17 @@ handleServerStream ::
   -> ServerStreamHandler s m
   -> WaiHandler
 handleServerStream rpc compression handler req write flush = do
-    handleRequestChunksLoop (decodeInput rpc compression) (\i -> handler req i >>= replyN) errorOnLeftOver nextChunk
+    handleRequestChunksLoop (decodeInput rpc compression) handleMsg handleEof nextChunk
   where
-    nextChunk = requestBody req
+    nextChunk = toStrict <$> strictRequestBody req
+    handleMsg = errorOnLeftOver (\i -> handler req i >>= replyN)
+    handleEof = closeEarly (GRPCStatus INVALID_ARGUMENT "early end of request body")
     replyN getMsg = do
         let go = getMsg >>= \case
                 Just msg -> do
                     write (encodeOutput rpc compression msg) >> flush
                     go
-                Nothing -> do
-                    modifyGRPCStatus req (GRPCStatus OK "")
+                Nothing -> pure ()
         go
 
 -- | Handle Client-Streaming RPCs.
@@ -99,45 +97,48 @@ handleClientStream ::
   -> ClientStreamHandler s m
   -> WaiHandler
 handleClientStream rpc compression handler req _ _ = do
-    handleRequestChunksLoop (decodeInput rpc compression) (handler req) loop nextChunk
-      `catch` \e -> do
-          modifyGRPCStatus req e
+    handleRequestChunksLoop (decodeInput rpc compression) handleMsg handleEof nextChunk
   where
     nextChunk = requestBody req
-    loop chunk = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc compression) (handler req) loop nextChunk
+    handleMsg dat msg = handler req (Just msg) >> loop dat
+    handleEof = handler req Nothing
+    loop chunk = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc compression) handleMsg handleEof nextChunk
 
 -- | Helpers to consume input in chunks.
 handleRequestChunksLoop
   :: (Message a)
   => Decoder (Either String a)
   -- ^ Message decoder.
-  -> (a -> IO ())
+  -> (ByteString -> a -> IO ())
   -- ^ Handler for a single message.
-  -> (ByteString -> IO ())
-  -- ^ Continue action when there are leftover data.
+  -- The ByteString corresponds to leftover data.
+  -> IO ()
+  -- ^ Handler for handling end-of-streams.
   -> IO ByteString
   -- ^ Action to retrieve the next chunk.
   -> IO ()
 {-# INLINEABLE handleRequestChunksLoop #-}
-handleRequestChunksLoop decoder handler continue nextChunk =
+handleRequestChunksLoop decoder handleMsg handleEof nextChunk =
     case decoder of
         (Done unusedDat _ (Right val)) -> do
-            handler val -- consider adding the unusedDat bit in the handler because we may want to throw on errors rather than risk having an effect when in fact the data input is in error
-            continue unusedDat
+            handleMsg unusedDat val
         (Done _ _ (Left err)) -> do
-            throwIO (GRPCStatus INVALID_ARGUMENT (ByteString.pack $ "done-error: " ++ err))
+            closeEarly (GRPCStatus INVALID_ARGUMENT (ByteString.pack $ "done-error: " ++ err))
         (Fail _ _ err)         ->
-            throwIO (GRPCStatus INVALID_ARGUMENT (ByteString.pack $ "fail-error: " ++ err))
+            closeEarly (GRPCStatus INVALID_ARGUMENT (ByteString.pack $ "fail-error: " ++ err))
         partial@(Partial _)    -> do
             chunk <- nextChunk
             if ByteString.null chunk
             then
-                throwIO (GRPCStatus INVALID_ARGUMENT "early end of request body")
+                handleEof
             else
-                handleRequestChunksLoop (pushChunk partial chunk) handler continue nextChunk
+                handleRequestChunksLoop (pushChunk partial chunk) handleMsg handleEof nextChunk
 
--- | Helper to error on left overs.
-errorOnLeftOver :: ByteString -> IO ()
-errorOnLeftOver rest
-  | ByteString.null rest = pure ()
-  | otherwise            = throwIO $ GRPCStatus INVALID_ARGUMENT ("left-overs: " <> rest)
+-- | Combinator around message handler to error on left overs.
+--
+-- This combinator ensures that, unless for client stream, an unparsed piece of
+-- data with a correctly-read message is treated as an error.
+errorOnLeftOver :: (a -> IO b) -> ByteString -> a -> IO b
+errorOnLeftOver f rest
+  | ByteString.null rest = f
+  | otherwise            = const $ closeEarly $ GRPCStatus INVALID_ARGUMENT ("left-overs: " <> rest)

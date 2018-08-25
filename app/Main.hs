@@ -48,8 +48,8 @@ handleRandomError _ input = do
 
 handleDummyServerStream :: ServerStreamHandler GRPCBin "dummyServerStream"
 handleDummyServerStream _ input = do
-    print ("sstream"::[Char], input)
-    return $ (threadDelay 1000000 >> return (Just input))
+    let p = print ("sstream"::[Char], input)
+    return $ (threadDelay 1000000 >> p >> return (Just input))
 
 handleDummyClientStream :: ClientStreamHandler GRPCBin "dummyClientStream"
 handleDummyClientStream _ input = do
