@@ -120,21 +120,21 @@ handleRequestChunksLoop
   -> IO ()
 {-# INLINEABLE handleRequestChunksLoop #-}
 handleRequestChunksLoop decoder handler continue nextChunk =
-    nextChunk >>= \chunk -> do
-        case pushChunk decoder chunk of
-            (Done unusedDat _ (Right val)) -> do
-                handler val
-                continue unusedDat
-            (Done _ _ (Left err)) -> do
-                throwIO (GRPCStatus INTERNAL (ByteString.pack $ "done-error: " ++ err))
-            (Fail _ _ err)         ->
-                throwIO (GRPCStatus INTERNAL (ByteString.pack $ "fail-error: " ++ err))
-            partial@(Partial _)    ->
-                if ByteString.null chunk
-                then
-                    throwIO (GRPCStatus INTERNAL "early end of request body")
-                else
-                    handleRequestChunksLoop partial handler continue nextChunk
+    case decoder of
+        (Done unusedDat _ (Right val)) -> do
+            handler val
+            continue unusedDat
+        (Done _ _ (Left err)) -> do
+            throwIO (GRPCStatus INTERNAL (ByteString.pack $ "done-error: " ++ err))
+        (Fail _ _ err)         ->
+            throwIO (GRPCStatus INTERNAL (ByteString.pack $ "fail-error: " ++ err))
+        partial@(Partial _)    -> do
+            chunk <- nextChunk
+            if ByteString.null chunk
+            then
+                throwIO (GRPCStatus INTERNAL "early end of request body")
+            else
+                handleRequestChunksLoop (pushChunk partial chunk) handler continue nextChunk
 
 -- | Helper to error on left overs.
 errorOnLeftOver :: ByteString -> IO ()
