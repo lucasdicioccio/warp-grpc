@@ -57,7 +57,9 @@ handleDummyServerStream _ input = do
             print ("sstream-msg"::[Char])
             return $ Just (n-1, input))
 
-handleDummyClientStream :: ClientStreamHandler GRPCBin "dummyClientStream"
+handleDummyClientStream :: ClientStreamHandler GRPCBin "dummyClientStream" Int
 handleDummyClientStream _ = do
     print ("new-cstream"::[Char])
-    return $ ClientStream (\input -> print ("cstream"::[Char], input)) (return $ def)
+    return $ (0, ClientStream
+                     (\n input -> print ("cstream"::[Char], n, input) >> return (n+1))
+                     (\n -> print ("end-cstream"::[Char], n) >> return def))

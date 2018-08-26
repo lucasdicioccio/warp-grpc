@@ -33,15 +33,15 @@ newtype ServerStream s m a = ServerStream {
 -- | Handy type for 'client-streaming' RPCs.
 --
 -- We expect an implementation to:
--- - acknowledge a the new client stream by returning two functions:
--- - a handler for new client message
--- - a handler for answering the client when it is ending its stream
+-- - acknowledge a the new client stream by returning an initial state and two functions:
+-- - a state-passing handler for new client message
+-- - a state-aware handler for answering the client when it is ending its stream
 -- See 'ClientStream' for the type which embodies these requirements.
-type ClientStreamHandler s m = Request -> IO (ClientStream s m)
+type ClientStreamHandler s m a = Request -> IO (a, ClientStream s m a)
 
-data ClientStream s m = ClientStream {
-    clientStreamHandler   :: MethodInput s m -> IO ()
-  , clientStreamFinalizer :: IO (MethodOutput s m)
+data ClientStream s m a = ClientStream {
+    clientStreamHandler   :: a -> MethodInput s m -> IO a
+  , clientStreamFinalizer :: a -> IO (MethodOutput s m)
   }
 
 -- | Construct a handler for handling a unary RPC.
@@ -69,7 +69,7 @@ clientStream
   :: (Service s, HasMethod s m)
   => RPC s m
   -> Compression
-  -> ClientStreamHandler s m
+  -> ClientStreamHandler s m a
   -> ServiceHandler
 clientStream rpc compression handler =
     ServiceHandler (path rpc) (handleClientStream rpc compression handler)
@@ -115,18 +115,18 @@ handleClientStream ::
      (Service s, HasMethod s m)
   => RPC s m
   -> Compression
-  -> ClientStreamHandler s m
+  -> ClientStreamHandler s m a
   -> WaiHandler
 handleClientStream rpc compression handler0 req write flush = do
     handler0 req >>= go
   where
-    go cStream = handleRequestChunksLoop (decodeInput rpc compression) handleMsg handleEof nextChunk
+    go (v, cStream) = handleRequestChunksLoop (decodeInput rpc compression) (handleMsg v) (handleEof v) nextChunk
       where
         nextChunk = requestBody req
-        handleMsg dat msg = clientStreamHandler cStream msg >> loop dat
-        handleEof = clientStreamFinalizer cStream >>= reply
+        handleMsg v0 dat msg = clientStreamHandler cStream v0 msg >>= \v1 -> loop dat v1
+        handleEof v0 = clientStreamFinalizer cStream v0 >>= reply
         reply msg = write (encodeOutput rpc compression msg) >> flush
-        loop chunk = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc compression) handleMsg handleEof nextChunk
+        loop chunk v1 = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc compression) (handleMsg v1) (handleEof v1) nextChunk
 
 -- | Helpers to consume input in chunks.
 handleRequestChunksLoop
