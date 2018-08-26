@@ -48,18 +48,18 @@ handleRandomError _ input = do
 
 handleDummyServerStream :: ServerStreamHandler GRPCBin "dummyServerStream" Int
 handleDummyServerStream _ input = do
-    print ("sstream"::[Char], input)
+    print ("sstream-start"::[Char], input)
     return $ (10, ServerStream $ \n -> do
         threadDelay 1000000
         if n == 0
-        then return Nothing
+        then print ("sstream-end"::[Char]) >> return Nothing
         else do
-            print ("sstream-msg"::[Char])
+            print ("sstream-msg"::[Char], n)
             return $ Just (n-1, input))
 
 handleDummyClientStream :: ClientStreamHandler GRPCBin "dummyClientStream" Int
 handleDummyClientStream _ = do
-    print ("new-cstream"::[Char])
+    print ("cstream-start"::[Char])
     return $ (0, ClientStream
-                     (\n input -> print ("cstream"::[Char], n, input) >> return (n+1))
-                     (\n -> print ("end-cstream"::[Char], n) >> return def))
+                     (\n input -> print ("cstream-msg"::[Char], n, input) >> return (n+1))
+                     (\n -> print ("cstream-end"::[Char], n) >> return def))
