@@ -1,3 +1,4 @@
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Network.GRPC.Server.Handlers where
@@ -21,12 +22,12 @@ type UnaryHandler s m = Request -> MethodInput s m -> IO (MethodOutput s m)
 --
 -- We expect an implementation to:
 -- - read the input request
--- - return an action that the server code will call to fetch the output to send to the client (or close an a Nothing)
+-- - return an initial state and an state-passing action that the server code will call to fetch the output to send to the client (or close an a Nothing)
 -- See 'ServerStream' for the type which embodies these requirements.
-type ServerStreamHandler s m = Request -> MethodInput s m -> IO (ServerStream s m)
+type ServerStreamHandler s m a = Request -> MethodInput s m -> IO (a, ServerStream s m a)
 
-newtype ServerStream s m = ServerStream {
-    serverStreamNext :: IO (Maybe (MethodOutput s m))
+newtype ServerStream s m a = ServerStream {
+    serverStreamNext :: a -> IO (Maybe (a, MethodOutput s m))
   }
 
 -- | Handy type for 'client-streaming' RPCs.
@@ -58,7 +59,7 @@ serverStream
   :: (Service s, HasMethod s m)
   => RPC s m
   -> Compression
-  -> ServerStreamHandler s m
+  -> ServerStreamHandler s m a
   -> ServiceHandler
 serverStream rpc compression handler =
     ServiceHandler (path rpc) (handleServerStream rpc compression handler)
@@ -93,7 +94,7 @@ handleServerStream ::
      (Service s, HasMethod s m)
   => RPC s m
   -> Compression
-  -> ServerStreamHandler s m
+  -> ServerStreamHandler s m a
   -> WaiHandler
 handleServerStream rpc compression handler req write flush = do
     handleRequestChunksLoop (decodeInput rpc compression) handleMsg handleEof nextChunk
@@ -101,13 +102,13 @@ handleServerStream rpc compression handler req write flush = do
     nextChunk = toStrict <$> strictRequestBody req
     handleMsg = errorOnLeftOver (\i -> handler req i >>= replyN)
     handleEof = closeEarly (GRPCStatus INVALID_ARGUMENT "early end of request body")
-    replyN sStream = do
-        let go = serverStreamNext sStream >>= \case
-                Just msg -> do
+    replyN (v, sStream) = do
+        let go v1 = serverStreamNext sStream v1 >>= \case
+                Just (v2, msg) -> do
                     write (encodeOutput rpc compression msg) >> flush
-                    go
+                    go v2
                 Nothing -> pure ()
-        go
+        go v
 
 -- | Handle Client-Streaming RPCs.
 handleClientStream ::

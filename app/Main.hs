@@ -5,8 +5,6 @@ module Main where
 import Network.GRPC.Server
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Chan (newChan, writeChan, readChan)
-import Control.Monad (replicateM_)
 import Data.ProtoLens.Message (def)
 import Network.Wai.Handler.WarpTLS (defaultTlsSettings)
 import Network.Wai.Handler.Warp (defaultSettings)
@@ -48,17 +46,16 @@ handleRandomError _ input = do
     print ("randomError"::[Char], input)
     return $ EmptyMessage def
 
-handleDummyServerStream :: ServerStreamHandler GRPCBin "dummyServerStream"
+handleDummyServerStream :: ServerStreamHandler GRPCBin "dummyServerStream" Int
 handleDummyServerStream _ input = do
     print ("sstream"::[Char], input)
-    chan <- newChan
-    replicateM_ 10 (writeChan chan $ Just input)
-    writeChan chan Nothing
-    return $ ServerStream $ do
+    return $ (10, ServerStream $ \n -> do
         threadDelay 1000000
-        val <- readChan chan
-        print ("sstream-msg"::[Char])
-        return val
+        if n == 0
+        then return Nothing
+        else do
+            print ("sstream-msg"::[Char])
+            return $ Just (n-1, input))
 
 handleDummyClientStream :: ClientStreamHandler GRPCBin "dummyClientStream"
 handleDummyClientStream _ = do
