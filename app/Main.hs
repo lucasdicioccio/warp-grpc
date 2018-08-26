@@ -9,20 +9,20 @@ import Data.ProtoLens.Message (def)
 import Network.Wai.Handler.WarpTLS (defaultTlsSettings)
 import Network.Wai.Handler.Warp (defaultSettings)
 import Network.GRPC.HTTP2.Types (RPC(..))
-import Network.GRPC.HTTP2.Encoding (gzip)
+import Network.GRPC.HTTP2.Encoding (uncompressed)
 import Proto.Protos.Grpcbin (GRPCBin, EmptyMessage(..), IndexReply(..), IndexReply'Endpoint(..))
 
 main :: IO ()
-main = runGrpc defaultTlsSettings defaultSettings handlers
+main = runGrpc defaultTlsSettings defaultSettings handlers uncompressed
 
 handlers :: [ServiceHandler]
 handlers =
-  [ unary (RPC :: RPC GRPCBin "empty") gzip handleEmpty
-  , unary (RPC :: RPC GRPCBin "index") gzip handleIndex
-  , unary (RPC :: RPC GRPCBin "specificError") gzip handleSpecificError
-  , unary (RPC :: RPC GRPCBin "randomError") gzip handleRandomError
-  , serverStream (RPC :: RPC GRPCBin "dummyServerStream") gzip handleDummyServerStream
-  , clientStream (RPC :: RPC GRPCBin "dummyClientStream") gzip handleDummyClientStream
+  [ unary (RPC :: RPC GRPCBin "empty") handleEmpty
+  , unary (RPC :: RPC GRPCBin "index") handleIndex
+  , unary (RPC :: RPC GRPCBin "specificError") handleSpecificError
+  , unary (RPC :: RPC GRPCBin "randomError") handleRandomError
+  , serverStream (RPC :: RPC GRPCBin "dummyServerStream") handleDummyServerStream
+  , clientStream (RPC :: RPC GRPCBin "dummyClientStream") handleDummyClientStream
   ]
 
 handleIndex :: UnaryHandler GRPCBin "index"
@@ -55,7 +55,7 @@ handleDummyServerStream _ input = do
         then print ("sstream-end"::[Char]) >> return Nothing
         else do
             print ("sstream-msg"::[Char], n)
-            return $ Just (n-1, input))
+            return $ Just (n-1, def))
 
 handleDummyClientStream :: ClientStreamHandler GRPCBin "dummyClientStream" Int
 handleDummyClientStream _ = do

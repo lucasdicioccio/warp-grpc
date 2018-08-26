@@ -9,6 +9,7 @@ import qualified Data.ByteString.Char8 as ByteString
 import           Data.ByteString.Lazy (fromStrict)
 import           Data.Binary.Builder (Builder)
 import qualified Data.List as List
+import           Network.GRPC.HTTP2.Encoding (Compression)
 import           Network.GRPC.HTTP2.Types (GRPCStatus(..), GRPCStatusCode(..), grpcContentTypeHV, grpcStatusHV, grpcMessageHV)
 import           Network.HTTP.Types (status200, status404)
 import           Network.Wai (Application, Request(..), rawPathInfo, responseLBS, responseStream)
@@ -17,7 +18,9 @@ import Network.GRPC.Server.Helpers (modifyGRPCStatus)
 
 -- | A Wai Handler for a request.
 type WaiHandler =
-     Request
+     Compression
+  -- ^ Compression for the request.
+  -> Request
   -- ^ Request object.
   -> (Builder -> IO ())
   -- ^ Write a data chunk in the reply.
@@ -37,9 +40,9 @@ data ServiceHandler = ServiceHandler {
 --
 -- Currently, gRPC calls are lookuped up by traversing the list of ServiceHandler.
 -- This lookup may be inefficient for large amount of servics.
-grpcApp :: [ServiceHandler] -> Application
-grpcApp services =
-    grpcService services err404app
+grpcApp :: Compression -> [ServiceHandler] -> Application
+grpcApp compression services =
+    grpcService compression services err404app
   where
     err404app :: Application
     err404app req rep =
@@ -53,8 +56,8 @@ closeEarly = throwIO
 --
 -- Currently, gRPC calls are lookuped up by traversing the list of ServiceHandler.
 -- This lookup may be inefficient for large amount of services.
-grpcService :: [ServiceHandler] -> (Application -> Application)
-grpcService services app = \req rep -> do
+grpcService :: Compression -> [ServiceHandler] -> (Application -> Application)
+grpcService compression services app = \req rep -> do
     case lookupHandler (rawPathInfo req) services of
         Just handler ->
             -- Handler that catches early GRPC termination and other exceptions.
@@ -65,7 +68,7 @@ grpcService services app = \req rep -> do
             -- These exceptions are swallowed from the WAI "onException"
             -- handler, so we'll need a better way to handle this case.
             let grpcHandler write flush =
-                    (handler req write flush >> modifyGRPCStatus req (GRPCStatus OK "WAI handler ended."))
+                    (handler compression req write flush >> modifyGRPCStatus req (GRPCStatus OK "WAI handler ended."))
                     `catches` [ Handler $ \(e::GRPCStatus)    -> modifyGRPCStatus req e
                               , Handler $ \(e::SomeException) -> modifyGRPCStatus req (GRPCStatus INTERNAL $ ByteString.pack $ show e )
                               ]

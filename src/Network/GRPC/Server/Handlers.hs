@@ -9,7 +9,7 @@ import           Data.ByteString.Char8 (ByteString)
 import           Data.ByteString.Lazy (toStrict)
 import           Data.ProtoLens.Message (Message)
 import           Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..))
-import           Network.GRPC.HTTP2.Encoding (Compression, decodeInput, encodeOutput)
+import           Network.GRPC.HTTP2.Encoding (decodeInput, encodeOutput)
 import           Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path)
 import           Network.Wai (Request, requestBody, strictRequestBody)
 
@@ -48,40 +48,36 @@ data ClientStream s m a = ClientStream {
 unary
   :: (Service s, HasMethod s m)
   => RPC s m
-  -> Compression
   -> UnaryHandler s m
   -> ServiceHandler
-unary rpc compression handler =
-    ServiceHandler (path rpc) (handleUnary rpc compression handler)
+unary rpc handler =
+    ServiceHandler (path rpc) (handleUnary rpc handler)
 
 -- | Construct a handler for handling a server-streaming RPC.
 serverStream
   :: (Service s, HasMethod s m)
   => RPC s m
-  -> Compression
   -> ServerStreamHandler s m a
   -> ServiceHandler
-serverStream rpc compression handler =
-    ServiceHandler (path rpc) (handleServerStream rpc compression handler)
+serverStream rpc handler =
+    ServiceHandler (path rpc) (handleServerStream rpc handler)
 
 -- | Construct a handler for handling a client-streaming RPC.
 clientStream
   :: (Service s, HasMethod s m)
   => RPC s m
-  -> Compression
   -> ClientStreamHandler s m a
   -> ServiceHandler
-clientStream rpc compression handler =
-    ServiceHandler (path rpc) (handleClientStream rpc compression handler)
+clientStream rpc handler =
+    ServiceHandler (path rpc) (handleClientStream rpc handler)
 
 -- | Handle unary RPCs.
 handleUnary ::
      (Service s, HasMethod s m)
   => RPC s m
-  -> Compression
   -> UnaryHandler s m
   -> WaiHandler
-handleUnary rpc compression handler req write flush = do
+handleUnary rpc handler compression req write flush = do
     handleRequestChunksLoop (decodeInput rpc compression) handleMsg handleEof nextChunk
   where
     nextChunk = toStrict <$> strictRequestBody req
@@ -93,10 +89,9 @@ handleUnary rpc compression handler req write flush = do
 handleServerStream ::
      (Service s, HasMethod s m)
   => RPC s m
-  -> Compression
   -> ServerStreamHandler s m a
   -> WaiHandler
-handleServerStream rpc compression handler req write flush = do
+handleServerStream rpc handler compression req write flush = do
     handleRequestChunksLoop (decodeInput rpc compression) handleMsg handleEof nextChunk
   where
     nextChunk = toStrict <$> strictRequestBody req
@@ -114,10 +109,9 @@ handleServerStream rpc compression handler req write flush = do
 handleClientStream ::
      (Service s, HasMethod s m)
   => RPC s m
-  -> Compression
   -> ClientStreamHandler s m a
   -> WaiHandler
-handleClientStream rpc compression handler0 req write flush = do
+handleClientStream rpc handler0 compression req write flush = do
     handler0 req >>= go
   where
     go (v, cStream) = handleRequestChunksLoop (decodeInput rpc compression) (handleMsg v) (handleEof v) nextChunk

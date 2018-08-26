@@ -30,6 +30,7 @@ module Network.GRPC.Server
     ) where
 
 import           Control.Exception (throwIO)
+import           Network.GRPC.HTTP2.Encoding (Compression)
 import           Network.GRPC.HTTP2.Types (GRPCStatus(..), GRPCStatusCode(..), GRPCStatusMessage)
 import           Network.Wai.Handler.WarpTLS (TLSSettings, runTLS)
 import           Network.Wai.Handler.Warp (Settings)
@@ -47,6 +48,8 @@ runGrpc
   -- ^ Warp settings.
   -> [ServiceHandler]
   -- ^ List of ServiceHandler. Refer to 'grcpApp'
+  -> Compression
+  -- ^ Compression method used.
   -> IO ()
-runGrpc tlsSettings settings handlers =
-    runTLS tlsSettings settings (grpcApp handlers)
+runGrpc tlsSettings settings handlers compression =
+    runTLS tlsSettings settings (grpcApp compression handlers)
