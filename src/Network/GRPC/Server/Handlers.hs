@@ -18,10 +18,19 @@ import Network.GRPC.Server.Wai (WaiHandler, ServiceHandler(..), closeEarly)
 type UnaryHandler s m = Request -> MethodInput s m -> IO (MethodOutput s m)
 
 -- | Handy type for 'server-streaming' RPCs.
+--
+-- We expect an implementation to:
+-- - read the input request
+-- - return an action that the server code will call to fetch the output to send to the client (or close an a Nothing)
 type ServerStreamHandler s m = Request -> MethodInput s m -> IO (IO (Maybe (MethodOutput s m)))
 
 -- | Handy type for 'client-streaming' RPCs.
-type ClientStreamHandler s m = Request -> Maybe (MethodInput s m) -> IO ()
+--
+-- We expect an implementation to:
+-- - acknowledge a the new client stream by returning two functions:
+-- - a handler for new client message
+-- - a handler for answering the client when it is ending its stream
+type ClientStreamHandler s m = Request -> IO (MethodInput s m -> IO (), IO (MethodOutput s m))
 
 -- | Construct a handler for handling a unary RPC.
 unary
@@ -96,13 +105,16 @@ handleClientStream ::
   -> Compression
   -> ClientStreamHandler s m
   -> WaiHandler
-handleClientStream rpc compression handler req _ _ = do
-    handleRequestChunksLoop (decodeInput rpc compression) handleMsg handleEof nextChunk
+handleClientStream rpc compression handler0 req write flush = do
+    handler0 req >>= go
   where
-    nextChunk = requestBody req
-    handleMsg dat msg = handler req (Just msg) >> loop dat
-    handleEof = handler req Nothing
-    loop chunk = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc compression) handleMsg handleEof nextChunk
+    go (handler1, handler2) = handleRequestChunksLoop (decodeInput rpc compression) handleMsg handleEof nextChunk
+      where
+        nextChunk = requestBody req
+        handleMsg dat msg = handler1 msg >> loop dat
+        handleEof = handler2 >>= reply
+        reply msg = write (encodeOutput rpc compression msg) >> flush
+        loop chunk = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc compression) handleMsg handleEof nextChunk
 
 -- | Helpers to consume input in chunks.
 handleRequestChunksLoop
