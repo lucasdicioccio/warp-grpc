@@ -22,7 +22,12 @@ type UnaryHandler s m = Request -> MethodInput s m -> IO (MethodOutput s m)
 -- We expect an implementation to:
 -- - read the input request
 -- - return an action that the server code will call to fetch the output to send to the client (or close an a Nothing)
-type ServerStreamHandler s m = Request -> MethodInput s m -> IO (IO (Maybe (MethodOutput s m)))
+-- See 'ServerStream' for the type which embodies these requirements.
+type ServerStreamHandler s m = Request -> MethodInput s m -> IO (ServerStream s m)
+
+newtype ServerStream s m = ServerStream {
+    serverStreamNext :: IO (Maybe (MethodOutput s m))
+  }
 
 -- | Handy type for 'client-streaming' RPCs.
 --
@@ -30,7 +35,13 @@ type ServerStreamHandler s m = Request -> MethodInput s m -> IO (IO (Maybe (Meth
 -- - acknowledge a the new client stream by returning two functions:
 -- - a handler for new client message
 -- - a handler for answering the client when it is ending its stream
-type ClientStreamHandler s m = Request -> IO (MethodInput s m -> IO (), IO (MethodOutput s m))
+-- See 'ClientStream' for the type which embodies these requirements.
+type ClientStreamHandler s m = Request -> IO (ClientStream s m)
+
+data ClientStream s m = ClientStream {
+    clientStreamHandler   :: MethodInput s m -> IO ()
+  , clientStreamFinalizer :: IO (MethodOutput s m)
+  }
 
 -- | Construct a handler for handling a unary RPC.
 unary
@@ -90,8 +101,8 @@ handleServerStream rpc compression handler req write flush = do
     nextChunk = toStrict <$> strictRequestBody req
     handleMsg = errorOnLeftOver (\i -> handler req i >>= replyN)
     handleEof = closeEarly (GRPCStatus INVALID_ARGUMENT "early end of request body")
-    replyN getMsg = do
-        let go = getMsg >>= \case
+    replyN sStream = do
+        let go = serverStreamNext sStream >>= \case
                 Just msg -> do
                     write (encodeOutput rpc compression msg) >> flush
                     go
@@ -108,11 +119,11 @@ handleClientStream ::
 handleClientStream rpc compression handler0 req write flush = do
     handler0 req >>= go
   where
-    go (handler1, handler2) = handleRequestChunksLoop (decodeInput rpc compression) handleMsg handleEof nextChunk
+    go cStream = handleRequestChunksLoop (decodeInput rpc compression) handleMsg handleEof nextChunk
       where
         nextChunk = requestBody req
-        handleMsg dat msg = handler1 msg >> loop dat
-        handleEof = handler2 >>= reply
+        handleMsg dat msg = clientStreamHandler cStream msg >> loop dat
+        handleEof = clientStreamFinalizer cStream >>= reply
         reply msg = write (encodeOutput rpc compression msg) >> flush
         loop chunk = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc compression) handleMsg handleEof nextChunk
 

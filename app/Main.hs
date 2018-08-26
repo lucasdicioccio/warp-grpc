@@ -54,7 +54,7 @@ handleDummyServerStream _ input = do
     chan <- newChan
     replicateM_ 10 (writeChan chan $ Just input)
     writeChan chan Nothing
-    return $ do
+    return $ ServerStream $ do
         threadDelay 1000000
         val <- readChan chan
         print ("sstream-msg"::[Char])
@@ -63,4 +63,4 @@ handleDummyServerStream _ input = do
 handleDummyClientStream :: ClientStreamHandler GRPCBin "dummyClientStream"
 handleDummyClientStream _ = do
     print ("new-cstream"::[Char])
-    return (\input -> print ("cstream"::[Char], input), return $ def)
+    return $ ClientStream (\input -> print ("cstream"::[Char], input)) (return $ def)

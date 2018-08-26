@@ -11,7 +11,9 @@ module Network.GRPC.Server
     ( runGrpc
     , UnaryHandler
     , ServerStreamHandler
+    , ServerStream(..)
     , ClientStreamHandler
+    , ClientStream(..)
     -- * registration
     , ServiceHandler
     , unary
@@ -32,7 +34,7 @@ import           Network.GRPC.HTTP2.Types (GRPCStatus(..), GRPCStatusCode(..), G
 import           Network.Wai.Handler.WarpTLS (TLSSettings, runTLS)
 import           Network.Wai.Handler.Warp (Settings)
 
-import           Network.GRPC.Server.Handlers (UnaryHandler, unary, ServerStreamHandler, serverStream, ClientStreamHandler, clientStream)
+import           Network.GRPC.Server.Handlers (UnaryHandler, unary, ServerStreamHandler, ServerStream(..), serverStream, ClientStreamHandler, ClientStream(..), clientStream)
 import           Network.GRPC.Server.Wai (ServiceHandler(..), grpcApp, grpcService)
 
 -- | Helper to constructs and serve a gRPC over HTTP2 application.
