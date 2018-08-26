@@ -8,11 +8,13 @@ import           Data.ByteString.Char8 (ByteString)
 import qualified Data.ByteString.Char8 as ByteString
 import           Data.ByteString.Lazy (fromStrict)
 import           Data.Binary.Builder (Builder)
+import           Data.Maybe (fromMaybe)
+import qualified Data.CaseInsensitive as CI
 import qualified Data.List as List
-import           Network.GRPC.HTTP2.Encoding (Compression)
-import           Network.GRPC.HTTP2.Types (GRPCStatus(..), GRPCStatusCode(..), grpcContentTypeHV, grpcStatusHV, grpcMessageHV)
+import           Network.GRPC.HTTP2.Encoding (Compression, grpcCompressionHV, uncompressed)
+import           Network.GRPC.HTTP2.Types (GRPCStatus(..), GRPCStatusCode(..), grpcContentTypeHV, grpcStatusHV, grpcMessageHV, grpcEncodingH, grpcAcceptEncodingH)
 import           Network.HTTP.Types (status200, status404)
-import           Network.Wai (Application, Request(..), rawPathInfo, responseLBS, responseStream)
+import           Network.Wai (Application, Request(..), rawPathInfo, responseLBS, responseStream, requestHeaders)
 
 import Network.GRPC.Server.Helpers (modifyGRPCStatus)
 
@@ -68,7 +70,7 @@ grpcService compression services app = \req rep -> do
             -- These exceptions are swallowed from the WAI "onException"
             -- handler, so we'll need a better way to handle this case.
             let grpcHandler write flush =
-                    (handler compression req write flush >> modifyGRPCStatus req (GRPCStatus OK "WAI handler ended."))
+                    (doHandle handler req write flush)
                     `catches` [ Handler $ \(e::GRPCStatus)    -> modifyGRPCStatus req e
                               , Handler $ \(e::SomeException) -> modifyGRPCStatus req (GRPCStatus INTERNAL $ ByteString.pack $ show e )
                               ]
@@ -84,3 +86,40 @@ grpcService compression services app = \req rep -> do
     lookupHandler :: ByteString -> [ServiceHandler] -> Maybe WaiHandler
     lookupHandler p plainHandlers = grpcWaiHandler <$>
         List.find (\(ServiceHandler rpcPath _) -> rpcPath == p) plainHandlers
+    doHandle handler req write flush = do
+        let bestCompression = lookupEncoding req [compression]
+        let pickedCompression = fromMaybe uncompressed bestCompression
+
+        let hopefulDecompression = lookupDecoding req [compression]
+        let pickedDecompression = fromMaybe uncompressed hopefulDecompression
+
+        -- TODO: compbine compressions algorithms
+
+        _ <- handler pickedCompression req write flush
+        modifyGRPCStatus req (GRPCStatus OK "WAI handler ended.")
+
+-- | Looks-up header for encoding outgoing messages.
+requestAcceptEncodingNames :: Request -> [ByteString]
+requestAcceptEncodingNames  req = fromMaybe [] $
+    ByteString.split ',' <$> lookup (CI.mk grpcAcceptEncodingH) (requestHeaders req)
+
+-- | Looks-up the compression to use from a set of known algorithms.
+lookupEncoding :: Request -> [Compression] -> Maybe Compression
+lookupEncoding req compressions =
+    safeHead [ c | c <- compressions
+                 , n <- requestAcceptEncodingNames req
+                 , n == grpcCompressionHV c
+             ]
+  where
+    safeHead [] = Nothing
+    safeHead (x:_) = Just x
+
+-- | Looks-up header for decoding incoming messages.
+requestDecodingName :: Request -> Maybe ByteString
+requestDecodingName req = lookup (CI.mk grpcEncodingH) (requestHeaders req)
+
+-- | Looks-up the compression to use for decoding messages.
+lookupDecoding :: Request -> [Compression] -> Maybe Compression
+lookupDecoding req compressions = do
+    d <- requestDecodingName req
+    lookup d [(grpcCompressionHV c, c) | c <- compressions]
