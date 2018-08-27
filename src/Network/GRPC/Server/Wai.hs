@@ -18,10 +18,15 @@ import           Network.Wai (Application, Request(..), rawPathInfo, responseLBS
 
 import Network.GRPC.Server.Helpers (modifyGRPCStatus)
 
+newtype Encoding = Encoding Compression
+newtype Decoding = Decoding Compression
+
 -- | A Wai Handler for a request.
 type WaiHandler =
-     Compression
-  -- ^ Compression for the request.
+     Decoding
+  -- ^ Compression for the request inputs.
+  -> Encoding
+  -- ^ Compression for the request outputs.
   -> Request
   -- ^ Request object.
   -> (Builder -> IO ())
@@ -88,14 +93,14 @@ grpcService compression services app = \req rep -> do
         List.find (\(ServiceHandler rpcPath _) -> rpcPath == p) plainHandlers
     doHandle handler req write flush = do
         let bestCompression = lookupEncoding req [compression]
-        let pickedCompression = fromMaybe uncompressed bestCompression
+        let pickedCompression = fromMaybe (Encoding uncompressed) bestCompression
 
         let hopefulDecompression = lookupDecoding req [compression]
-        let pickedDecompression = fromMaybe uncompressed hopefulDecompression
+        let pickedDecompression = fromMaybe (Decoding uncompressed) hopefulDecompression
 
-        -- TODO: compbine compressions algorithms
+        -- TODO: add error when trying to decompress from uncompressed
 
-        _ <- handler pickedCompression req write flush
+        _ <- handler pickedDecompression pickedCompression req write flush
         modifyGRPCStatus req (GRPCStatus OK "WAI handler ended.")
 
 -- | Looks-up header for encoding outgoing messages.
@@ -104,8 +109,8 @@ requestAcceptEncodingNames  req = fromMaybe [] $
     ByteString.split ',' <$> lookup (CI.mk grpcAcceptEncodingH) (requestHeaders req)
 
 -- | Looks-up the compression to use from a set of known algorithms.
-lookupEncoding :: Request -> [Compression] -> Maybe Compression
-lookupEncoding req compressions =
+lookupEncoding :: Request -> [Compression] -> Maybe Encoding
+lookupEncoding req compressions = fmap Encoding $
     safeHead [ c | c <- compressions
                  , n <- requestAcceptEncodingNames req
                  , n == grpcCompressionHV c
@@ -119,7 +124,7 @@ requestDecodingName :: Request -> Maybe ByteString
 requestDecodingName req = lookup (CI.mk grpcEncodingH) (requestHeaders req)
 
 -- | Looks-up the compression to use for decoding messages.
-lookupDecoding :: Request -> [Compression] -> Maybe Compression
-lookupDecoding req compressions = do
+lookupDecoding :: Request -> [Compression] -> Maybe Decoding
+lookupDecoding req compressions = fmap Decoding $ do
     d <- requestDecodingName req
     lookup d [(grpcCompressionHV c, c) | c <- compressions]
