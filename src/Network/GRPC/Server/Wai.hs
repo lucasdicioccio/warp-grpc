@@ -18,8 +18,8 @@ import           Network.Wai (Application, Request(..), rawPathInfo, responseLBS
 
 import Network.GRPC.Server.Helpers (modifyGRPCStatus)
 
-newtype Encoding = Encoding Compression
-newtype Decoding = Decoding Compression
+newtype Encoding = Encoding { _getEncodingCompression :: Compression }
+newtype Decoding = Decoding { _getDecodingCompression :: Compression }
 
 -- | A Wai Handler for a request.
 type WaiHandler =

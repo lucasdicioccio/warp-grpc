@@ -13,7 +13,7 @@ import           Network.GRPC.HTTP2.Encoding (decodeInput, encodeOutput)
 import           Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path)
 import           Network.Wai (Request, requestBody, strictRequestBody)
 
-import Network.GRPC.Server.Wai (WaiHandler, ServiceHandler(..), closeEarly)
+import Network.GRPC.Server.Wai (WaiHandler, ServiceHandler(..), closeEarly, Encoding(..),Decoding(..))
 
 -- | Handy type to refer to Handler for 'unary' RPCs handler.
 type UnaryHandler s m = Request -> MethodInput s m -> IO (MethodOutput s m)
@@ -77,13 +77,13 @@ handleUnary ::
   => RPC s m
   -> UnaryHandler s m
   -> WaiHandler
-handleUnary rpc handler compression req write flush = do
-    handleRequestChunksLoop (decodeInput rpc compression) handleMsg handleEof nextChunk
+handleUnary rpc handler decoding encoding req write flush = do
+    handleRequestChunksLoop (decodeInput rpc $ _getDecodingCompression decoding) handleMsg handleEof nextChunk
   where
     nextChunk = toStrict <$> strictRequestBody req
     handleMsg = errorOnLeftOver (\i -> handler req i >>= reply)
     handleEof = closeEarly (GRPCStatus INVALID_ARGUMENT "early end of request body")
-    reply msg = write (encodeOutput rpc compression msg) >> flush
+    reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
 
 -- | Handle Server-Streaming RPCs.
 handleServerStream ::
@@ -91,8 +91,8 @@ handleServerStream ::
   => RPC s m
   -> ServerStreamHandler s m a
   -> WaiHandler
-handleServerStream rpc handler compression req write flush = do
-    handleRequestChunksLoop (decodeInput rpc compression) handleMsg handleEof nextChunk
+handleServerStream rpc handler decoding encoding req write flush = do
+    handleRequestChunksLoop (decodeInput rpc $ _getDecodingCompression decoding) handleMsg handleEof nextChunk
   where
     nextChunk = toStrict <$> strictRequestBody req
     handleMsg = errorOnLeftOver (\i -> handler req i >>= replyN)
@@ -100,7 +100,7 @@ handleServerStream rpc handler compression req write flush = do
     replyN (v, sStream) = do
         let go v1 = serverStreamNext sStream v1 >>= \case
                 Just (v2, msg) -> do
-                    write (encodeOutput rpc compression msg) >> flush
+                    write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
                     go v2
                 Nothing -> pure ()
         go v
@@ -111,16 +111,16 @@ handleClientStream ::
   => RPC s m
   -> ClientStreamHandler s m a
   -> WaiHandler
-handleClientStream rpc handler0 compression req write flush = do
+handleClientStream rpc handler0 decoding encoding req write flush = do
     handler0 req >>= go
   where
-    go (v, cStream) = handleRequestChunksLoop (decodeInput rpc compression) (handleMsg v) (handleEof v) nextChunk
+    go (v, cStream) = handleRequestChunksLoop (decodeInput rpc $ _getDecodingCompression decoding) (handleMsg v) (handleEof v) nextChunk
       where
         nextChunk = requestBody req
         handleMsg v0 dat msg = clientStreamHandler cStream v0 msg >>= \v1 -> loop dat v1
         handleEof v0 = clientStreamFinalizer cStream v0 >>= reply
-        reply msg = write (encodeOutput rpc compression msg) >> flush
-        loop chunk v1 = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc compression) (handleMsg v1) (handleEof v1) nextChunk
+        reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
+        loop chunk v1 = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc (_getDecodingCompression decoding)) (handleMsg v1) (handleEof v1) nextChunk
 
 -- | Helpers to consume input in chunks.
 handleRequestChunksLoop
