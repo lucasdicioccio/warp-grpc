@@ -24,7 +24,7 @@ dependencies:
 - binary
 - bytestring
 - case-insensitive
-- http2-grpc-types
+- http2-grpc-types >= 0.2
 - http-types
 - proto-lens
 - wai

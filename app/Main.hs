@@ -9,11 +9,11 @@ import Data.ProtoLens.Message (def)
 import Network.Wai.Handler.WarpTLS (defaultTlsSettings)
 import Network.Wai.Handler.Warp (defaultSettings)
 import Network.GRPC.HTTP2.Types (RPC(..))
-import Network.GRPC.HTTP2.Encoding (uncompressed)
+import Network.GRPC.HTTP2.Encoding (gzip)
 import Proto.Protos.Grpcbin (GRPCBin, EmptyMessage(..), IndexReply(..), IndexReply'Endpoint(..))
 
 main :: IO ()
-main = runGrpc defaultTlsSettings defaultSettings handlers uncompressed
+main = runGrpc defaultTlsSettings defaultSettings handlers [gzip]
 
 handlers :: [ServiceHandler]
 handlers =

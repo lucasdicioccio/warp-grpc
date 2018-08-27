@@ -48,8 +48,8 @@ runGrpc
   -- ^ Warp settings.
   -> [ServiceHandler]
   -- ^ List of ServiceHandler. Refer to 'grcpApp'
-  -> Compression
-  -- ^ Compression method used.
+  -> [Compression]
+  -- ^ Compression methods used.
   -> IO ()
-runGrpc tlsSettings settings handlers compression =
-    runTLS tlsSettings settings (grpcApp compression handlers)
+runGrpc tlsSettings settings handlers compressions =
+    runTLS tlsSettings settings (grpcApp compressions handlers)

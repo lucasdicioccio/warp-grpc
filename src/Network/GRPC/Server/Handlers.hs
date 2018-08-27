@@ -9,11 +9,11 @@ import           Data.ByteString.Char8 (ByteString)
 import           Data.ByteString.Lazy (toStrict)
 import           Data.ProtoLens.Message (Message)
 import           Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..))
-import           Network.GRPC.HTTP2.Encoding (decodeInput, encodeOutput)
+import           Network.GRPC.HTTP2.Encoding (decodeInput, encodeOutput, Encoding(..), Decoding(..))
 import           Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path)
 import           Network.Wai (Request, requestBody, strictRequestBody)
 
-import Network.GRPC.Server.Wai (WaiHandler, ServiceHandler(..), closeEarly, Encoding(..),Decoding(..))
+import Network.GRPC.Server.Wai (WaiHandler, ServiceHandler(..), closeEarly)
 
 -- | Handy type to refer to Handler for 'unary' RPCs handler.
 type UnaryHandler s m = Request -> MethodInput s m -> IO (MethodOutput s m)

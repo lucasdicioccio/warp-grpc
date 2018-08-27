@@ -11,15 +11,12 @@ import           Data.Binary.Builder (Builder)
 import           Data.Maybe (fromMaybe)
 import qualified Data.CaseInsensitive as CI
 import qualified Data.List as List
-import           Network.GRPC.HTTP2.Encoding (Compression, grpcCompressionHV, uncompressed)
+import           Network.GRPC.HTTP2.Encoding (Compression, Encoding(..), Decoding(..), grpcCompressionHV, uncompressed)
 import           Network.GRPC.HTTP2.Types (GRPCStatus(..), GRPCStatusCode(..), grpcContentTypeHV, grpcStatusHV, grpcMessageHV, grpcEncodingH, grpcAcceptEncodingH)
 import           Network.HTTP.Types (status200, status404)
 import           Network.Wai (Application, Request(..), rawPathInfo, responseLBS, responseStream, requestHeaders)
 
 import Network.GRPC.Server.Helpers (modifyGRPCStatus)
-
-newtype Encoding = Encoding { _getEncodingCompression :: Compression }
-newtype Decoding = Decoding { _getDecodingCompression :: Compression }
 
 -- | A Wai Handler for a request.
 type WaiHandler =
@@ -47,9 +44,9 @@ data ServiceHandler = ServiceHandler {
 --
 -- Currently, gRPC calls are lookuped up by traversing the list of ServiceHandler.
 -- This lookup may be inefficient for large amount of servics.
-grpcApp :: Compression -> [ServiceHandler] -> Application
-grpcApp compression services =
-    grpcService compression services err404app
+grpcApp :: [Compression] -> [ServiceHandler] -> Application
+grpcApp compressions services =
+    grpcService compressions services err404app
   where
     err404app :: Application
     err404app req rep =
@@ -63,8 +60,8 @@ closeEarly = throwIO
 --
 -- Currently, gRPC calls are lookuped up by traversing the list of ServiceHandler.
 -- This lookup may be inefficient for large amount of services.
-grpcService :: Compression -> [ServiceHandler] -> (Application -> Application)
-grpcService compression services app = \req rep -> do
+grpcService :: [Compression] -> [ServiceHandler] -> (Application -> Application)
+grpcService compressions services app = \req rep -> do
     case lookupHandler (rawPathInfo req) services of
         Just handler ->
             -- Handler that catches early GRPC termination and other exceptions.
@@ -92,13 +89,11 @@ grpcService compression services app = \req rep -> do
     lookupHandler p plainHandlers = grpcWaiHandler <$>
         List.find (\(ServiceHandler rpcPath _) -> rpcPath == p) plainHandlers
     doHandle handler req write flush = do
-        let bestCompression = lookupEncoding req [compression]
+        let bestCompression = lookupEncoding req compressions
         let pickedCompression = fromMaybe (Encoding uncompressed) bestCompression
 
-        let hopefulDecompression = lookupDecoding req [compression]
+        let hopefulDecompression = lookupDecoding req compressions
         let pickedDecompression = fromMaybe (Decoding uncompressed) hopefulDecompression
-
-        -- TODO: add error when trying to decompress from uncompressed
 
         _ <- handler pickedDecompression pickedCompression req write flush
         modifyGRPCStatus req (GRPCStatus OK "WAI handler ended.")
