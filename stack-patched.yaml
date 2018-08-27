@@ -2,4 +2,5 @@ resolver: lts-12.6
 packages:
 - .
 - ../../open-source/wai/warp
-- ../http2-grpc-types
+extra-deps:
+- 'http2-grpc-types-0.2.0.0'
