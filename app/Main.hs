@@ -21,6 +21,7 @@ handlers =
   , unary (RPC :: RPC GRPCBin "index") handleIndex
   , unary (RPC :: RPC GRPCBin "specificError") handleSpecificError
   , unary (RPC :: RPC GRPCBin "randomError") handleRandomError
+  , unary (RPC :: RPC GRPCBin "dummyUnary") handleDummyUnary
   , serverStream (RPC :: RPC GRPCBin "dummyServerStream") handleDummyServerStream
   , clientStream (RPC :: RPC GRPCBin "dummyClientStream") handleDummyClientStream
   ]
@@ -45,6 +46,9 @@ handleRandomError :: UnaryHandler GRPCBin "randomError"
 handleRandomError _ input = do
     print ("randomError"::[Char], input)
     return $ EmptyMessage def
+
+handleDummyUnary :: UnaryHandler GRPCBin "dummyUnary"
+handleDummyUnary _ input = pure input
 
 handleDummyServerStream :: ServerStreamHandler GRPCBin "dummyServerStream" Int
 handleDummyServerStream _ input = do
