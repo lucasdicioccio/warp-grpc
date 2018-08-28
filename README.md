@@ -1,7 +1,8 @@
 # warp-grpc
 
-A (still experimental) gRPC server implementation on top of Warp's HTTP2 handler.
-The lib also contains a demo sever using the awesome `grpcb.in` Proto.
+A slowly getting in shape gRPC server implementation on top of Warp's HTTP2
+handler.  The lib also contains a demo sever using the awesome `grpcb.in`
+Proto.
 
 ## Usage
 
@@ -10,9 +11,6 @@ The lib also contains a demo sever using the awesome `grpcb.in` Proto.
 In addition to a working Haskell dev environment, you need to:
 - build the `proto-lens-protoc` executable (`proto-lens`)
 - install the `protoc` executable
-
-### Adding .proto files to a Haskell package
-
 
 ### Adding .proto files to a Haskell package
 
@@ -60,12 +58,25 @@ openssl x509 -req -in certificate.csr -signkey key.pem -out certificate.pem
 - stack build
 - stack exec -- warp-grpc-exe
 
+Note that you'll need a patched Warp using https://github.com/yesodweb/wai/pull/711 .
+
+## Design
+
+The library implements gRPC using a WAI middleware for a set of gRPC endpoints.
+Endpoint handlers differ depending of the streaming/unary-ty of individual
+RPCs. Bidirectional streams will be supported next.
+
+There is little specification around the expected allowed observable states in
+gRPC, hence the types this library presents make conservative choices: unary
+RPCs expect an input before providing an output. Client stream allows to return
+an output only when the client has stopped streaming. Server streams wait for
+an input before starting to iterate sending outputs.
+
 ## Next steps
 
-* Proper types for streaming handlers (e.g., to carry a state around). Current setup is too ad-hoc.
-* Unify {Unary,ClientStream,ServerStream}Handler (maybe around an `mtl` like set of typeclasses)
 * Split the `grpcb.in` example from the lib.
+* Handler type for bidirectional streams.
 
 ## Caveats
 
-* Only supports "h2" with TLS.
+* Only supports "h2" with TLS (I'd argue it's a feature, not a bug. Don't @-me)
