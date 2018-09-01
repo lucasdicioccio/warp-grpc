@@ -3,7 +3,6 @@
 module Network.GRPC.Server.Helpers where
 
 import qualified Data.ByteString.Char8 as ByteString
-import qualified Data.CaseInsensitive as CI
 import           Data.Maybe (fromMaybe)
 import           Network.GRPC.HTTP2.Types (GRPCStatus(..), trailerForStatusCode, grpcStatusH, grpcMessageH)
 import           Network.Wai (Request)
@@ -18,5 +17,5 @@ makeGRPCTrailers (GRPCStatus s msg) h2data =
     Just $! (fromMaybe defaultHTTP2Data h2data) { http2dataTrailers = trailers }
   where
     trailers = if ByteString.null msg then [status] else [status, message]
-    status = (CI.mk grpcStatusH, trailerForStatusCode s)
-    message = (CI.mk grpcMessageH, msg)
+    status = (grpcStatusH, trailerForStatusCode s)
+    message = (grpcMessageH, msg)

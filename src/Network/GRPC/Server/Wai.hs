@@ -12,7 +12,7 @@ import           Data.Maybe (fromMaybe)
 import qualified Data.CaseInsensitive as CI
 import qualified Data.List as List
 import           Network.GRPC.HTTP2.Encoding (Compression, Encoding(..), Decoding(..), grpcCompressionHV, uncompressed)
-import           Network.GRPC.HTTP2.Types (GRPCStatus(..), GRPCStatusCode(..), grpcContentTypeHV, grpcStatusHV, grpcMessageHV, grpcEncodingH, grpcAcceptEncodingH)
+import           Network.GRPC.HTTP2.Types (GRPCStatus(..), GRPCStatusCode(..), grpcStatusH, grpcMessageH, grpcContentTypeHV, grpcEncodingH, grpcAcceptEncodingH)
 import           Network.HTTP.Types (status200, status404)
 import           Network.Wai (Application, Request(..), rawPathInfo, responseLBS, responseStream, requestHeaders)
 
@@ -82,8 +82,8 @@ grpcService compressions services app = \req rep -> do
   where
     hdrs200 = [
         ("content-type", grpcContentTypeHV)
-      , ("trailer", grpcStatusHV)
-      , ("trailer", grpcMessageHV)
+      , ("trailer", CI.original grpcStatusH)
+      , ("trailer", CI.original grpcMessageH)
       ]
     lookupHandler :: ByteString -> [ServiceHandler] -> Maybe WaiHandler
     lookupHandler p plainHandlers = grpcWaiHandler <$>
@@ -101,7 +101,7 @@ grpcService compressions services app = \req rep -> do
 -- | Looks-up header for encoding outgoing messages.
 requestAcceptEncodingNames :: Request -> [ByteString]
 requestAcceptEncodingNames  req = fromMaybe [] $
-    ByteString.split ',' <$> lookup (CI.mk grpcAcceptEncodingH) (requestHeaders req)
+    ByteString.split ',' <$> lookup grpcAcceptEncodingH (requestHeaders req)
 
 -- | Looks-up the compression to use from a set of known algorithms.
 lookupEncoding :: Request -> [Compression] -> Maybe Encoding
@@ -116,7 +116,7 @@ lookupEncoding req compressions = fmap Encoding $
 
 -- | Looks-up header for decoding incoming messages.
 requestDecodingName :: Request -> Maybe ByteString
-requestDecodingName req = lookup (CI.mk grpcEncodingH) (requestHeaders req)
+requestDecodingName req = lookup grpcEncodingH (requestHeaders req)
 
 -- | Looks-up the compression to use for decoding messages.
 lookupDecoding :: Request -> [Compression] -> Maybe Decoding

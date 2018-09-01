@@ -28,7 +28,7 @@ dependencies:
 - http-types
 - proto-lens
 - wai
-- warp
+- warp >= 3.2.24 && < 3.3
 - warp-tls
 
 library:
