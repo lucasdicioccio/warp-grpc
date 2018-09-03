@@ -1,5 +1,5 @@
 name:                warp-grpc
-version:             0.1.0.0
+version:             0.1.0.1
 github:              "lucasdicioccio/warp-grpc"
 license:             BSD3
 author:              "Lucas DiCioccio"
