@@ -1,6 +1,8 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeFamilies #-}
 module Network.GRPC.Server.Handlers where
 
 import           Data.Binary.Get (pushChunk, Decoder(..))
@@ -8,7 +10,7 @@ import qualified Data.ByteString.Char8 as ByteString
 import           Data.ByteString.Char8 (ByteString)
 import           Data.ByteString.Lazy (toStrict)
 import           Data.ProtoLens.Message (Message)
-import           Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..))
+import           Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..), StreamingType(..))
 import           Network.GRPC.HTTP2.Encoding (decodeInput, encodeOutput, Encoding(..), Decoding(..))
 import           Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path)
 import           Network.Wai (Request, requestBody, strictRequestBody)
@@ -55,7 +57,7 @@ unary rpc handler =
 
 -- | Construct a handler for handling a server-streaming RPC.
 serverStream
-  :: (Service s, HasMethod s m)
+  :: (Service s, HasMethod s m,  MethodStreamingType s m ~ ServerStreaming)
   => RPC s m
   -> ServerStreamHandler s m a
   -> ServiceHandler
@@ -64,7 +66,7 @@ serverStream rpc handler =
 
 -- | Construct a handler for handling a client-streaming RPC.
 clientStream
-  :: (Service s, HasMethod s m)
+  :: (Service s, HasMethod s m,  MethodStreamingType s m ~ ClientStreaming)
   => RPC s m
   -> ClientStreamHandler s m a
   -> ServiceHandler
