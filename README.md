@@ -1,8 +1,8 @@
 # warp-grpc
 
-A slowly getting in shape gRPC server implementation on top of Warp's HTTP2
-handler.  The lib also contains a demo sever using the awesome `grpcb.in`
-Proto.
+A gRPC server implementation on top of Warp's HTTP2 handler.  The lib also
+contains a demo sever using the awesome `grpcb.in` Proto. The current release
+is an advanced technical demo, expect a few breaking changes.
 
 ## Usage
 
@@ -77,6 +77,6 @@ an input before starting to iterate sending outputs.
 * Split the `grpcb.in` example from the lib.
 * Handler type for bidirectional streams.
 
-## Caveats
+## Limitations
 
 * Only supports "h2" with TLS (I'd argue it's a feature, not a bug. Don't @-me)

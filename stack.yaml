@@ -3,3 +3,4 @@ packages:
 - .
 extra-deps:
 - 'http2-grpc-types-0.3.0.0'
+- 'warp-3.2.24'
