@@ -10,13 +10,9 @@ extra-source-files:
 - README.md
 - ChangeLog.md
 
-# Metadata used when publishing your package
 synopsis:            A minimal gRPC server on top of Warp.
 category:            Networking
 
-# To avoid duplicated efforts in documentation and dealing with the
-# complications of embedding Haddock markup inside cabal files, it is
-# common to point users to the README.md file.
 description:         Please see the README on Github at <https://github.com/githubuser/warp-grpc#readme>
 
 dependencies:
@@ -33,32 +29,3 @@ dependencies:
 
 library:
   source-dirs: src
-
-executables:
-  warp-grpc-exe:
-    main:                Main.hs
-    other-modules:
-    - Proto.Protos.Grpcbin
-    - Proto.Protos.Grpcbin_Fields
-    source-dirs:
-    - app
-    - gen
-    ghc-options:
-    - -threaded
-    - -rtsopts
-    - -with-rtsopts=-N
-    dependencies:
-    - warp-grpc
-    - proto-lens
-    - proto-lens-protoc
-
-tests:
-  warp-grpc-test:
-    main:                Spec.hs
-    source-dirs:         test
-    ghc-options:
-    - -threaded
-    - -rtsopts
-    - -with-rtsopts=-N
-    dependencies:
-    - warp-grpc
