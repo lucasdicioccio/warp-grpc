@@ -4,11 +4,8 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
--- TODO:
--- * read timeout
--- * proper primitives for streaming
-module Network.GRPC.Server
-    ( runGrpc
+module Network.GRPC.Server (
+      runGrpc
     , UnaryHandler
     , ServerStreamHandler
     , ServerStream(..)
