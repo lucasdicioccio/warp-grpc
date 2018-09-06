@@ -124,19 +124,44 @@ handleClientStream rpc handler0 decoding encoding req write flush = do
         reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
         loop chunk v1 = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc (_getDecodingCompression decoding)) (handleMsg v1) (handleEof v1) nextChunk
 
+{-
+handleBidirStream ::
+    (Service s, HasMethod s m)
+  => RPC s m
+  -> BidirStreamHandler s m a
+  -> WaiHandler
+handleBidirStream rpc handler0 decoding encoding req write flush = do
+    handler0 req >>= go
+  where
+    nextChunk = requestBody req
+    reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
+    go (v, bStream) = do
+        act <- bStreamAction bStream
+        case act of
+            WaitInput handleMsg handleEof -> do
+                handleRequestChunksLoop (decodeInput rpc $ _getDecodingCompression decoding)
+                                        (\x -> handleMsg v x >>= cont)
+                                        (handleEof v)
+                                        nextChunk
+            WriteOutput msg -> do
+                reply msg
+                go (v, bStream)
+            Done -> return ()
+-}
+
 -- | Helpers to consume input in chunks.
 handleRequestChunksLoop
   :: (Message a)
   => Decoder (Either String a)
   -- ^ Message decoder.
-  -> (ByteString -> a -> IO ())
+  -> (ByteString -> a -> IO b)
   -- ^ Handler for a single message.
   -- The ByteString corresponds to leftover data.
-  -> IO ()
+  -> IO b
   -- ^ Handler for handling end-of-streams.
   -> IO ByteString
   -- ^ Action to retrieve the next chunk.
-  -> IO ()
+  -> IO b
 {-# INLINEABLE handleRequestChunksLoop #-}
 handleRequestChunksLoop decoder handleMsg handleEof nextChunk =
     case decoder of
