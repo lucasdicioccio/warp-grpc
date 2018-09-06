@@ -46,6 +46,29 @@ data ClientStream s m a = ClientStream {
   , clientStreamFinalizer :: a -> IO (MethodOutput s m)
   }
 
+-- | Handy type for 'bidirectional-streaming' RPCs.
+--
+-- We expect an implementation to:
+-- - acknowlege a new bidirection stream by returning an initial state and one functions:
+-- - a state-passing function that returns a single action step
+-- The action may be to
+-- - stop immediately
+-- - wait and handle some input with a callback and a finalizer (if the client closes the stream on its side) that may change the state
+-- - return a value and a new state
+--
+-- There is no way to stop locally (that would mean sending HTTP2 trailers) and
+-- keep receiving messages from the client.
+type BiDiStreamHandler s m a = Request -> IO (a, BiDiStream s m a)
+
+data BiDiStep s m a
+  = Abort
+  | WaitInput !(a -> MethodInput s m -> IO a) !(a -> IO a)
+  | WriteOutput !a (MethodOutput s m)
+
+data BiDiStream s m a = BiDiStream {
+    bidirNextStep :: a -> IO (BiDiStep s m a)
+  }
+
 -- | Construct a handler for handling a unary RPC.
 unary
   :: (Service s, HasMethod s m)
@@ -72,6 +95,15 @@ clientStream
   -> ServiceHandler
 clientStream rpc handler =
     ServiceHandler (path rpc) (handleClientStream rpc handler)
+
+-- | Construct a handler for handling a bidirectional-streaming RPC.
+bidiStream
+  :: (Service s, HasMethod s m,  MethodStreamingType s m ~ 'BiDiStreaming)
+  => RPC s m
+  -> BiDiStreamHandler s m a
+  -> ServiceHandler
+bidiStream rpc handler =
+    ServiceHandler (path rpc) (handleBiDiStream rpc handler)
 
 -- | Handle unary RPCs.
 handleUnary ::
@@ -124,30 +156,30 @@ handleClientStream rpc handler0 decoding encoding req write flush = do
         reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
         loop chunk v1 = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc (_getDecodingCompression decoding)) (handleMsg v1) (handleEof v1) nextChunk
 
-{-
-handleBidirStream ::
+-- | Handle Bidirectional-Streaming RPCs.
+handleBiDiStream ::
     (Service s, HasMethod s m)
   => RPC s m
-  -> BidirStreamHandler s m a
+  -> BiDiStreamHandler s m a
   -> WaiHandler
-handleBidirStream rpc handler0 decoding encoding req write flush = do
-    handler0 req >>= go
+handleBiDiStream rpc handler0 decoding encoding req write flush = do
+    handler0 req >>= go ""
   where
     nextChunk = requestBody req
     reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
-    go (v, bStream) = do
-        act <- bStreamAction bStream
-        case act of
+    go chunk (v0, bStream) = do
+        let cont dat v1 = go dat (v1, bStream)
+        step <- (bidirNextStep bStream) v0
+        case step of
             WaitInput handleMsg handleEof -> do
-                handleRequestChunksLoop (decodeInput rpc $ _getDecodingCompression decoding)
-                                        (\x -> handleMsg v x >>= cont)
-                                        (handleEof v)
+                handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc $ _getDecodingCompression decoding)
+                                        (\dat msg -> handleMsg v0 msg >>= cont dat)
+                                        (handleEof v0 >>= cont "")
                                         nextChunk
-            WriteOutput msg -> do
+            WriteOutput v1 msg -> do
                 reply msg
-                go (v, bStream)
-            Done -> return ()
--}
+                cont "" v1
+            Abort -> return ()
 
 -- | Helpers to consume input in chunks.
 handleRequestChunksLoop
