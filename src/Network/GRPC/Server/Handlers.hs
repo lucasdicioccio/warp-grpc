@@ -57,7 +57,7 @@ unary rpc handler =
 
 -- | Construct a handler for handling a server-streaming RPC.
 serverStream
-  :: (Service s, HasMethod s m,  MethodStreamingType s m ~ ServerStreaming)
+  :: (Service s, HasMethod s m,  MethodStreamingType s m ~ 'ServerStreaming)
   => RPC s m
   -> ServerStreamHandler s m a
   -> ServiceHandler
@@ -66,7 +66,7 @@ serverStream rpc handler =
 
 -- | Construct a handler for handling a client-streaming RPC.
 clientStream
-  :: (Service s, HasMethod s m,  MethodStreamingType s m ~ ClientStreaming)
+  :: (Service s, HasMethod s m,  MethodStreamingType s m ~ 'ClientStreaming)
   => RPC s m
   -> ClientStreamHandler s m a
   -> ServiceHandler
