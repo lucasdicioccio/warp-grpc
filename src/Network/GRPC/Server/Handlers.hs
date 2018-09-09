@@ -5,6 +5,8 @@
 {-# LANGUAGE TypeFamilies #-}
 module Network.GRPC.Server.Handlers where
 
+import           Control.Concurrent.Async (concurrently)
+import           Control.Monad (void)
 import           Data.Binary.Get (pushChunk, Decoder(..))
 import qualified Data.ByteString.Char8 as ByteString
 import           Data.ByteString.Char8 (ByteString)
@@ -180,6 +182,53 @@ handleBiDiStream rpc handler0 decoding encoding req write flush = do
                 reply msg
                 cont "" v1
             Abort -> return ()
+
+-- | A GeneralStreamHandler combining server and client asynchronous streams.
+type GeneralStreamHandler s m a b =
+    Request -> IO (a, IncomingStream s m a, b, OutgoingStream s m b)
+
+-- | Pair of handlers for reacting to incoming messages.
+data IncomingStream s m a = IncomingStream {
+    incomingStreamHandler   :: a -> MethodInput s m -> IO a
+  , incomingStreamFinalizer :: a -> IO ()
+  }
+
+-- | Handler to decide on the next message (if any) to return.
+data OutgoingStream s m a = OutgoingStream {
+    outgoingStreamNext  :: a -> IO (Maybe (a, MethodOutput s m))
+  }
+
+-- | Handler for the somewhat general case where two threads behave concurrently:
+-- - one reads messages from the client
+-- - one returns messages to the client
+handleGeneralStream ::
+    (Service s, HasMethod s m)
+  => RPC s m
+  -> GeneralStreamHandler s m a b
+  -> WaiHandler
+handleGeneralStream rpc handler0 decoding encoding req write flush = void $ do
+    handler0 req >>= go
+  where
+    newDecoder = decodeInput rpc $ _getDecodingCompression decoding
+    nextChunk = requestBody req
+    reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
+
+    go (in0, instream, out0, outstream) = concurrently
+        (incomingLoop newDecoder in0 instream)
+        (replyLoop out0 outstream)
+
+    replyLoop v0 sstream@(OutgoingStream next) = do
+        next v0 >>= \case
+            Nothing          -> return v0
+            (Just (v1, msg)) -> reply msg >> replyLoop v1 sstream
+
+    incomingLoop decode v0 cstream = do
+        let handleMsg dat msg = do
+                v1 <- incomingStreamHandler cstream v0 msg
+                incomingLoop (pushChunk newDecoder dat) v1 cstream
+        let handleEof = incomingStreamFinalizer cstream v0 >> pure v0
+        handleRequestChunksLoop decode handleMsg handleEof nextChunk
+
 
 -- | Helpers to consume input in chunks.
 handleRequestChunksLoop
