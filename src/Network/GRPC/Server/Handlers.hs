@@ -107,6 +107,15 @@ bidiStream
 bidiStream rpc handler =
     ServiceHandler (path rpc) (handleBiDiStream rpc handler)
 
+-- | Construct a handler for handling a bidirectional-streaming RPC.
+generalStream
+  :: (Service s, HasMethod s m)
+  => RPC s m
+  -> GeneralStreamHandler s m a b
+  -> ServiceHandler
+generalStream rpc handler =
+    ServiceHandler (path rpc) (handleGeneralStream rpc handler)
+
 -- | Handle unary RPCs.
 handleUnary ::
      (Service s, HasMethod s m)

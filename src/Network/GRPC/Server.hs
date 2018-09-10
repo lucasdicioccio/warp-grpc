@@ -14,12 +14,16 @@ module Network.GRPC.Server (
     , BiDiStreamHandler
     , BiDiStream(..)
     , BiDiStep(..)
+    , GeneralStreamHandler
+    , IncomingStream(..)
+    , OutgoingStream(..)
     -- * registration
     , ServiceHandler
     , unary
     , serverStream
     , clientStream
     , bidiStream
+    , generalStream
     -- * registration
     , GRPCStatus (..)
     , throwIO
@@ -36,7 +40,7 @@ import           Network.GRPC.HTTP2.Types (GRPCStatus(..), GRPCStatusCode(..), G
 import           Network.Wai.Handler.WarpTLS (TLSSettings, runTLS)
 import           Network.Wai.Handler.Warp (Settings)
 
-import           Network.GRPC.Server.Handlers (UnaryHandler, unary, ServerStreamHandler, ServerStream(..), serverStream, ClientStreamHandler, ClientStream(..), clientStream, BiDiStreamHandler, BiDiStream(..), BiDiStep(..), bidiStream)
+import           Network.GRPC.Server.Handlers (UnaryHandler, unary, ServerStreamHandler, ServerStream(..), serverStream, ClientStreamHandler, ClientStream(..), clientStream, BiDiStreamHandler, BiDiStream(..), BiDiStep(..), bidiStream, GeneralStreamHandler, IncomingStream(..), OutgoingStream(..), generalStream)
 import           Network.GRPC.Server.Wai (ServiceHandler(..), grpcApp, grpcService)
 
 -- | Helper to constructs and serve a gRPC over HTTP2 application.
