@@ -23,10 +23,22 @@ library.  Import this library and the generated proto-lens code to implement
 handlers for the `service` stanzas defined in the `.proto` files (see
 Haddocks). Finally, serve `warp` over TLS`.
 
+## Example
+
+Please refer to https://github.com/lucasdicioccio/warp-grpc-example for an example.
+
 ## Next steps
 
-* Handler type for bidirectional streams.
+* Helper to set metadatas (a.k.a., headers and trailers).
+  - (API-breaking) some or all handlers will get an IO-step to return extra metadata
+* Helper to map request headerlists into client metadatas (probably in `http2-grpc-types`)
 
 ## Limitations
 
 * Only supports "h2" with TLS (I'd argue it's a feature, not a bug. Don't @-me)
+* Some valid gRPC applications may not be expressible directly on top of warp
+  because sending HTTP2 trailers (i.e., signalling the server's desire to stop
+  sending messages) is correlated with closing the HTTP2 stream (i.e., stop
+  accepting client messages). Hence it's not feasible to create a bidirectional
+  stream that terminates on the server end while continuing to ingest client
+  messages. This use case, however, seems like a corner case.
