@@ -21,9 +21,9 @@ dependencies:
 - binary >= 0.8.5 && < 0.9
 - bytestring >= 0.10.8 && < 0.11
 - case-insensitive >= 1.2.0 && < 1.3
-- http2-grpc-types >= 0.3 && < 0.4
+- http2-grpc-types >= 0.3 && < 0.5
 - http-types >= 0.12 && < 0.13
-- proto-lens >= 0.3 && < 0.5
+- proto-lens >= 0.3 && < 0.6
 - wai >= 3.2 && < 3.3
 - warp >= 3.2.24 && < 3.3
 - warp-tls >= 3.2 && < 3.3
