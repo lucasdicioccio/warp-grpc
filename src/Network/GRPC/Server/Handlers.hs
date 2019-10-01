@@ -15,7 +15,7 @@ import           Data.ProtoLens.Message (Message)
 import           Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..), StreamingType(..))
 import           Network.GRPC.HTTP2.Encoding (decodeInput, encodeOutput, Encoding(..), Decoding(..))
 import           Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path)
-import           Network.Wai (Request, requestBody, strictRequestBody)
+import           Network.Wai (Request, getRequestBodyChunk, strictRequestBody)
 
 import Network.GRPC.Server.Wai (WaiHandler, ServiceHandler(..), closeEarly)
 
@@ -161,7 +161,7 @@ handleClientStream rpc handler0 decoding encoding req write flush = do
   where
     go (v, cStream) = handleRequestChunksLoop (decodeInput rpc $ _getDecodingCompression decoding) (handleMsg v) (handleEof v) nextChunk
       where
-        nextChunk = requestBody req
+        nextChunk = getRequestBodyChunk req
         handleMsg v0 dat msg = clientStreamHandler cStream v0 msg >>= \v1 -> loop dat v1
         handleEof v0 = clientStreamFinalizer cStream v0 >>= reply
         reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
@@ -176,7 +176,7 @@ handleBiDiStream ::
 handleBiDiStream rpc handler0 decoding encoding req write flush = do
     handler0 req >>= go ""
   where
-    nextChunk = requestBody req
+    nextChunk = getRequestBodyChunk req
     reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
     go chunk (v0, bStream) = do
         let cont dat v1 = go dat (v1, bStream)
@@ -219,7 +219,7 @@ handleGeneralStream rpc handler0 decoding encoding req write flush = void $ do
     handler0 req >>= go
   where
     newDecoder = decodeInput rpc $ _getDecodingCompression decoding
-    nextChunk = requestBody req
+    nextChunk = getRequestBodyChunk req
     reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
 
     go (in0, instream, out0, outstream) = concurrently
