@@ -2,3 +2,4 @@
 http2-server-grpc.cabal
 warp-grpc.cabal
 *~
+stack.yaml.lock

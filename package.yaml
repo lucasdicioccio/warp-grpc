@@ -27,6 +27,7 @@ dependencies:
 - wai >= 3.2 && < 3.3
 - warp >= 3.2.24 && < 3.3
 - warp-tls >= 3.2 && < 3.3
+- proto3-wire >= 1 && < 1.1
 
 library:
   source-dirs: src
