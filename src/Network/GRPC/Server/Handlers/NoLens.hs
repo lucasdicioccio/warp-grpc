@@ -3,24 +3,52 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeFamilies #-}
-module Network.GRPC.Server.Handlers where
+module Network.GRPC.Server.Handlers.NoLens where
 
 import           Control.Concurrent.Async (concurrently)
 import           Control.Monad (void)
-import           Data.Binary.Get (pushChunk, Decoder(..))
+import           Data.Binary.Builder (Builder, singleton, putWord32be, fromByteString)
+import           Data.Binary.Get (pushChunk, Decoder(..), runGetIncremental, getInt8, getWord32be, getByteString)
 import qualified Data.ByteString.Char8 as ByteString
 import           Data.ByteString.Char8 (ByteString)
 import           Data.ByteString.Lazy (toStrict)
-import           Data.ProtoLens.Message (Message)
-import           Data.ProtoLens.Service.Types (Service(..), HasMethod, HasMethodImpl(..), StreamingType(..))
-import           Network.GRPC.HTTP2.Encoding (decodeInput, encodeOutput, Encoding(..), Decoding(..))
-import           Network.GRPC.HTTP2.Types (RPC(..), GRPCStatus(..), GRPCStatusCode(..), path)
+import           Network.GRPC.HTTP2.Encoding (Encoding(..), Decoding(..), Compression(..))
+import           Network.GRPC.HTTP2.Types (GRPCStatus(..), GRPCStatusCode(..), HeaderValue)
 import           Network.Wai (Request, getRequestBodyChunk, strictRequestBody)
+import qualified Proto3.Wire.Encode as PBEnc
+import qualified Proto3.Wire.Decode as PBDec
 
 import Network.GRPC.Server.Wai (WaiHandler, ServiceHandler(..), closeEarly)
 
+-- From 'Network.GRPC.HTTP2.Types', copied to remove dependency on proto-lens
+data RPC = RPC { pkg :: ByteString, srv :: ByteString, meth :: ByteString }
+
+path :: RPC -> HeaderValue
+{-# INLINE path #-}
+path rpc = "/" <> pkg rpc <> "." <> srv rpc <> "/" <> meth rpc
+
+type ProtoBufEncoder a = a -> PBEnc.MessageBuilder
+type ProtoBufDecoder a = PBDec.Parser PBDec.RawMessage a
+type ProtoBufBothSides i o = (ProtoBufDecoder i, ProtoBufEncoder o)
+
+encode :: ProtoBufEncoder m -> Compression -> m -> Builder
+encode toProtoBuf compression plain =
+    mconcat [ singleton (if _compressionByteSet compression then 1 else 0)
+            , putWord32be (fromIntegral $ ByteString.length bin)
+            , fromByteString bin
+            ]
+  where
+    bin = _compressionFunction compression $ toStrict $ PBEnc.toLazyByteString (toProtoBuf plain)
+
+decoder :: ProtoBufDecoder a -> Compression -> Decoder (Either PBDec.ParseError a)
+decoder fromProtoBuf compression = runGetIncremental $ do
+    isCompressed <- getInt8      -- 1byte
+    let decompress = if isCompressed == 0 then pure else (_decompressionFunction compression)
+    n <- getWord32be             -- 4bytes
+    PBDec.parse fromProtoBuf <$> (decompress =<< getByteString (fromIntegral n))
+
 -- | Handy type to refer to Handler for 'unary' RPCs handler.
-type UnaryHandler s m = Request -> MethodInput s m -> IO (MethodOutput s m)
+type UnaryHandler i o = Request -> i -> IO o
 
 -- | Handy type for 'server-streaming' RPCs.
 --
@@ -28,10 +56,10 @@ type UnaryHandler s m = Request -> MethodInput s m -> IO (MethodOutput s m)
 -- - read the input request
 -- - return an initial state and an state-passing action that the server code will call to fetch the output to send to the client (or close an a Nothing)
 -- See 'ServerStream' for the type which embodies these requirements.
-type ServerStreamHandler s m a = Request -> MethodInput s m -> IO (a, ServerStream s m a)
+type ServerStreamHandler i o a = Request -> i -> IO (a, ServerStream o a)
 
-newtype ServerStream s m a = ServerStream {
-    serverStreamNext :: a -> IO (Maybe (a, MethodOutput s m))
+newtype ServerStream o a = ServerStream {
+    serverStreamNext :: a -> IO (Maybe (a, o))
   }
 
 -- | Handy type for 'client-streaming' RPCs.
@@ -41,11 +69,11 @@ newtype ServerStream s m a = ServerStream {
 -- - a state-passing handler for new client message
 -- - a state-aware handler for answering the client when it is ending its stream
 -- See 'ClientStream' for the type which embodies these requirements.
-type ClientStreamHandler s m a = Request -> IO (a, ClientStream s m a)
+type ClientStreamHandler i o a = Request -> IO (a, ClientStream i o a)
 
-data ClientStream s m a = ClientStream {
-    clientStreamHandler   :: a -> MethodInput s m -> IO a
-  , clientStreamFinalizer :: a -> IO (MethodOutput s m)
+data ClientStream i o a = ClientStream {
+    clientStreamHandler   :: a -> i -> IO a
+  , clientStreamFinalizer :: a -> IO o
   }
 
 -- | Handy type for 'bidirectional-streaming' RPCs.
@@ -60,84 +88,84 @@ data ClientStream s m a = ClientStream {
 --
 -- There is no way to stop locally (that would mean sending HTTP2 trailers) and
 -- keep receiving messages from the client.
-type BiDiStreamHandler s m a = Request -> IO (a, BiDiStream s m a)
+type BiDiStreamHandler i o a = Request -> IO (a, BiDiStream i o a)
 
-data BiDiStep s m a
+data BiDiStep i o a
   = Abort
-  | WaitInput !(a -> MethodInput s m -> IO a) !(a -> IO a)
-  | WriteOutput !a (MethodOutput s m)
+  | WaitInput !(a -> i -> IO a) !(a -> IO a)
+  | WriteOutput !a o
 
-data BiDiStream s m a = BiDiStream {
-    bidirNextStep :: a -> IO (BiDiStep s m a)
+data BiDiStream i o a = BiDiStream {
+    bidirNextStep :: a -> IO (BiDiStep i o a)
   }
 
 -- | Construct a handler for handling a unary RPC.
 unary
-  :: (Service s, HasMethod s m)
-  => RPC s m
-  -> UnaryHandler s m
+  :: ProtoBufBothSides i o
+  -> RPC
+  -> UnaryHandler i o
   -> ServiceHandler
-unary rpc handler =
-    ServiceHandler (path rpc) (handleUnary rpc handler)
+unary pb rpc handler =
+    ServiceHandler (path rpc) (handleUnary pb rpc handler)
 
 -- | Construct a handler for handling a server-streaming RPC.
 serverStream
-  :: (Service s, HasMethod s m,  MethodStreamingType s m ~ 'ServerStreaming)
-  => RPC s m
-  -> ServerStreamHandler s m a
+  :: ProtoBufBothSides i o
+  -> RPC
+  -> ServerStreamHandler i o a
   -> ServiceHandler
-serverStream rpc handler =
-    ServiceHandler (path rpc) (handleServerStream rpc handler)
+serverStream pb rpc handler =
+    ServiceHandler (path rpc) (handleServerStream pb rpc handler)
 
 -- | Construct a handler for handling a client-streaming RPC.
 clientStream
-  :: (Service s, HasMethod s m,  MethodStreamingType s m ~ 'ClientStreaming)
-  => RPC s m
-  -> ClientStreamHandler s m a
+  :: ProtoBufBothSides i o
+  -> RPC
+  -> ClientStreamHandler i o a
   -> ServiceHandler
-clientStream rpc handler =
-    ServiceHandler (path rpc) (handleClientStream rpc handler)
+clientStream pb rpc handler =
+    ServiceHandler (path rpc) (handleClientStream pb rpc handler)
 
 -- | Construct a handler for handling a bidirectional-streaming RPC.
 bidiStream
-  :: (Service s, HasMethod s m,  MethodStreamingType s m ~ 'BiDiStreaming)
-  => RPC s m
-  -> BiDiStreamHandler s m a
+  :: ProtoBufBothSides i o
+  -> RPC
+  -> BiDiStreamHandler i o a
   -> ServiceHandler
-bidiStream rpc handler =
-    ServiceHandler (path rpc) (handleBiDiStream rpc handler)
+bidiStream pb rpc handler =
+    ServiceHandler (path rpc) (handleBiDiStream pb rpc handler)
 
 -- | Construct a handler for handling a bidirectional-streaming RPC.
 generalStream
-  :: (Service s, HasMethod s m)
-  => RPC s m
-  -> GeneralStreamHandler s m a b
+  :: ProtoBufBothSides i o
+  -> RPC
+  -> GeneralStreamHandler i o a b
   -> ServiceHandler
-generalStream rpc handler =
-    ServiceHandler (path rpc) (handleGeneralStream rpc handler)
+generalStream pb rpc handler =
+    ServiceHandler (path rpc) (handleGeneralStream pb rpc handler)
 
 -- | Handle unary RPCs.
 handleUnary ::
-     (Service s, HasMethod s m)
-  => RPC s m
-  -> UnaryHandler s m
+     ProtoBufBothSides i o
+  -> RPC
+  -> UnaryHandler i o
   -> WaiHandler
-handleUnary rpc handler decoding encoding req write flush = do
-    handleRequestChunksLoop (decodeInput rpc $ _getDecodingCompression decoding) handleMsg handleEof nextChunk
+handleUnary (iDec, oEnc) rpc handler decoding encoding req write flush = do
+    handleRequestChunksLoop (decoder iDec $ _getDecodingCompression decoding) handleMsg handleEof nextChunk
   where
     nextChunk = toStrict <$> strictRequestBody req
     handleMsg = errorOnLeftOver (\i -> handler req i >>= reply)
     handleEof = closeEarly (GRPCStatus INVALID_ARGUMENT "early end of request body")
-    reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
+    reply msg = write (encode oEnc (_getEncodingCompression encoding) msg) >> flush
 
 -- | Handle Server-Streaming RPCs.
 handleServerStream ::
-     (Service s, HasMethod s m)
-  => RPC s m
-  -> ServerStreamHandler s m a
+     ProtoBufBothSides i o
+  -> RPC
+  -> ServerStreamHandler i o a
   -> WaiHandler
-handleServerStream rpc handler decoding encoding req write flush = do
-    handleRequestChunksLoop (decodeInput rpc $ _getDecodingCompression decoding) handleMsg handleEof nextChunk
+handleServerStream (iDec, oEnc) rpc handler decoding encoding req write flush = do
+    handleRequestChunksLoop (decoder iDec $ _getDecodingCompression decoding) handleMsg handleEof nextChunk
   where
     nextChunk = toStrict <$> strictRequestBody req
     handleMsg = errorOnLeftOver (\i -> handler req i >>= replyN)
@@ -145,45 +173,49 @@ handleServerStream rpc handler decoding encoding req write flush = do
     replyN (v, sStream) = do
         let go v1 = serverStreamNext sStream v1 >>= \case
                 Just (v2, msg) -> do
-                    write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
+                    write (encode oEnc (_getEncodingCompression encoding) msg) >> flush
                     go v2
                 Nothing -> pure ()
         go v
 
 -- | Handle Client-Streaming RPCs.
 handleClientStream ::
-     (Service s, HasMethod s m)
-  => RPC s m
-  -> ClientStreamHandler s m a
+     ProtoBufBothSides i o
+  -> RPC
+  -> ClientStreamHandler i o a
   -> WaiHandler
-handleClientStream rpc handler0 decoding encoding req write flush = do
+handleClientStream (iDec, oEnc) rpc handler0 decoding encoding req write flush = do
     handler0 req >>= go
   where
-    go (v, cStream) = handleRequestChunksLoop (decodeInput rpc $ _getDecodingCompression decoding) (handleMsg v) (handleEof v) nextChunk
+    go (v, cStream) = handleRequestChunksLoop (decoder iDec $ _getDecodingCompression decoding) (handleMsg v) (handleEof v) nextChunk
       where
         nextChunk = getRequestBodyChunk req
         handleMsg v0 dat msg = clientStreamHandler cStream v0 msg >>= \v1 -> loop dat v1
         handleEof v0 = clientStreamFinalizer cStream v0 >>= reply
-        reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
-        loop chunk v1 = handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc (_getDecodingCompression decoding)) (handleMsg v1) (handleEof v1) nextChunk
+        reply msg = write (encode oEnc (_getEncodingCompression encoding) msg) >> flush
+        loop chunk v1 = handleRequestChunksLoop
+                          (flip pushChunk chunk $ decoder iDec (_getDecodingCompression decoding))
+                          (handleMsg v1) (handleEof v1) nextChunk
 
 -- | Handle Bidirectional-Streaming RPCs.
 handleBiDiStream ::
-    (Service s, HasMethod s m)
-  => RPC s m
-  -> BiDiStreamHandler s m a
+     ProtoBufBothSides i o
+  -> RPC
+  -> BiDiStreamHandler i o a
   -> WaiHandler
-handleBiDiStream rpc handler0 decoding encoding req write flush = do
+handleBiDiStream (iDec, oEnc) rpc handler0 decoding encoding req write flush = do
     handler0 req >>= go ""
   where
     nextChunk = getRequestBodyChunk req
-    reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
+    reply msg = write (encode oEnc (_getEncodingCompression encoding) msg) >> flush
     go chunk (v0, bStream) = do
         let cont dat v1 = go dat (v1, bStream)
         step <- (bidirNextStep bStream) v0
         case step of
             WaitInput handleMsg handleEof -> do
-                handleRequestChunksLoop (flip pushChunk chunk $ decodeInput rpc $ _getDecodingCompression decoding)
+                handleRequestChunksLoop (flip pushChunk chunk
+                                         $ decoder iDec
+                                         $ _getDecodingCompression decoding)
                                         (\dat msg -> handleMsg v0 msg >>= cont dat)
                                         (handleEof v0 >>= cont "")
                                         nextChunk
@@ -193,34 +225,34 @@ handleBiDiStream rpc handler0 decoding encoding req write flush = do
             Abort -> return ()
 
 -- | A GeneralStreamHandler combining server and client asynchronous streams.
-type GeneralStreamHandler s m a b =
-    Request -> IO (a, IncomingStream s m a, b, OutgoingStream s m b)
+type GeneralStreamHandler i o a b =
+    Request -> IO (a, IncomingStream i a, b, OutgoingStream o b)
 
 -- | Pair of handlers for reacting to incoming messages.
-data IncomingStream s m a = IncomingStream {
-    incomingStreamHandler   :: a -> MethodInput s m -> IO a
+data IncomingStream i a = IncomingStream {
+    incomingStreamHandler   :: a -> i -> IO a
   , incomingStreamFinalizer :: a -> IO ()
   }
 
 -- | Handler to decide on the next message (if any) to return.
-data OutgoingStream s m a = OutgoingStream {
-    outgoingStreamNext  :: a -> IO (Maybe (a, MethodOutput s m))
+data OutgoingStream o a = OutgoingStream {
+    outgoingStreamNext  :: a -> IO (Maybe (a, o))
   }
 
 -- | Handler for the somewhat general case where two threads behave concurrently:
 -- - one reads messages from the client
 -- - one returns messages to the client
 handleGeneralStream ::
-    (Service s, HasMethod s m)
-  => RPC s m
-  -> GeneralStreamHandler s m a b
+     ProtoBufBothSides i o
+  -> RPC
+  -> GeneralStreamHandler i o a b
   -> WaiHandler
-handleGeneralStream rpc handler0 decoding encoding req write flush = void $ do
+handleGeneralStream (iDec, oEnc) rpc handler0 decoding encoding req write flush = void $ do
     handler0 req >>= go
   where
-    newDecoder = decodeInput rpc $ _getDecodingCompression decoding
+    newDecoder = decoder iDec $ _getDecodingCompression decoding
     nextChunk = getRequestBodyChunk req
-    reply msg = write (encodeOutput rpc (_getEncodingCompression encoding) msg) >> flush
+    reply msg = write (encode oEnc (_getEncodingCompression encoding) msg) >> flush
 
     go (in0, instream, out0, outstream) = concurrently
         (incomingLoop newDecoder in0 instream)
@@ -241,8 +273,7 @@ handleGeneralStream rpc handler0 decoding encoding req write flush = void $ do
 
 -- | Helpers to consume input in chunks.
 handleRequestChunksLoop
-  :: (Message a)
-  => Decoder (Either String a)
+  :: Decoder (Either PBDec.ParseError a)
   -- ^ Message decoder.
   -> (ByteString -> a -> IO b)
   -- ^ Handler for a single message.
@@ -258,7 +289,7 @@ handleRequestChunksLoop decoder handleMsg handleEof nextChunk =
         (Done unusedDat _ (Right val)) -> do
             handleMsg unusedDat val
         (Done _ _ (Left err)) -> do
-            closeEarly (GRPCStatus INVALID_ARGUMENT (ByteString.pack $ "done-error: " ++ err))
+            closeEarly (GRPCStatus INVALID_ARGUMENT (ByteString.pack $ "done-error: " ++ show err))
         (Fail _ _ err)         ->
             closeEarly (GRPCStatus INVALID_ARGUMENT (ByteString.pack $ "fail-error: " ++ err))
         partial@(Partial _)    -> do
