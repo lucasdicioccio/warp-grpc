@@ -1,3 +1,10 @@
+# THIS REPO IS MOVING
+
+NOTE: we'll be moving the code in this repository to https://github.com/haskell-grpc-native .
+
+
+
+
 # warp-grpc
 
 A gRPC server implementation on top of Warp's HTTP2 handler.  The lib also
